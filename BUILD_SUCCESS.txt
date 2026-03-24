@@ -1,0 +1,74 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   离线感知调试工具 - 编译成功
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ 编译状态: 成功
+📦 可执行文件: build/offline_perception_debug (851KB)
+🕐 编译时间: 2026-01-08 17:20
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 实现的功能
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+本离线工具完全匹配ROS2版本的模式化感知处理逻辑:
+
+✓ Mode 0: Disable - 禁用模式,不进行任何处理
+✓ Mode 1: Only Depth - 仅深度计算,无深度学习模型
+✓ Mode 2: Detection - 目标检测融合深度
+✓ Mode 3: Segmentation - 语义分割融合深度
+✓ Mode 4: Charge Station QR - 充电桩二维码识别
+✓ Mode 5: Multi-task - 多任务识别 (分割+检测)
+✓ Mode 6: Sub-task - 子任务识别
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 修复的问题
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 类名错误修复:
+   - DetPerception → det_perception
+   - SegPerception → seg_perception
+   - MultiSubPerception → multi_perception
+   - QrCsPerception → qr_cs_perception
+   - MulSubPerception → multi_perception
+
+2. 方法名修复:
+   - stereo_init() → stereo_multi_param_init()
+
+3. 初始化逻辑修复:
+   - perception_init()返回void而非int
+   - multi_perception只需要一个模型参数
+
+4. 常量引用问题修复:
+   - 为需要非常量引用的函数创建Mat副本
+   - 使用.clone()避免修改原始const参数
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 使用方法
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 基本运行:
+   ./build/offline_perception_debug
+
+2. 指定输入输出目录:
+   ./build/offline_perception_debug <input_dir> <output_dir>
+
+3. 输入要求:
+   - 图像命名格式: *_left.jpg, *_right.jpg
+   - 默认输入目录: data/input/
+   - 默认输出目录: data/output/
+
+4. 输出结果:
+   - .pcd文件 - 点云数据
+   - _depth.jpg - 深度图可视化
+   - _labels.png - 标签图
+   - _view_xy.jpg, _view_xz.jpg, _view_yz.jpg - 点云三视图
+   - _view_combined.jpg - 组合视图
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ 编译完成! 现在可以运行离线调试工具了!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

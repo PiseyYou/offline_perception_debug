@@ -1,0 +1,54 @@
+# Offline Perception Debug Configuration
+# Based on ROS2 launch file: stereo_perception_multi.py
+
+# Inference Mode
+# 0: Segmentation only
+# 1: Detection only
+# 2: Segmentation + Detection fusion
+# 3: CDT (Charging Dock Detection)
+# 4: QR/CS Detection
+# 5: Multi-task (current optimization target)
+# 6: Sub-perception
+infer_mode: 5
+
+# Model Paths (relative to models/ directory)
+models:
+  cdt_model: "cdt_20251125_640x384.bin"
+  multi_model: "mul_20250918_640x384.bin"
+  det_model: "det_20241106_640x480.bin"
+  seg_model: "seg_20250421_640x384.bin"
+  cs_model: "cqr_20250821_640x384_yolov8n.bin"
+  sub_model: "sub_20260105_640x384.bin"
+
+# Detection Parameters
+detection:
+  threshold: 0.51
+  erode_pixel: 205
+  area_threshold: 0.5
+
+# Camera Configuration
+camera:
+  enable_front: true
+  enable_side: false
+  side_warning_area: 50
+
+# Stereo Matching Parameters
+stereo:
+  baseline: 0.12           # meters
+  focal_length: 400.0      # pixels
+  enable_height_filter: true
+  
+# Processing Options  
+processing:
+  enable_ces_show: false
+  enable_lawn_ratio: false
+  
+# Image Dimensions
+image:
+  width: 640
+  height: 384
+  
+# Performance Options
+performance:
+  depth_skip_frames: 2     # Calculate depth every N frames (1=no skip)
+  fast_path_threshold: 100 # Skip complex label processing if label1+label5 < this

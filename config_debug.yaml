@@ -1,0 +1,3 @@
+input_dir: /home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/debug/
+output_dir: /home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/debug/test_output/
+mode: 6

@@ -1,0 +1,11 @@
+--- src/offline_perception_debug_432.cpp
++++ src/offline_perception_debug_432.cpp
+@@ -420,7 +420,7 @@
+     Mat obstacle_mask = Mat::zeros(label_map.size(), CV_8UC1);
+     for (int y = 0; y < label_map.rows; y++) {
+       for (int x = 0; x < label_map.cols; x++) {
+-        if (label_map.at<uchar>(y, x) >= 100) {
++        if (label_map.at<uchar>(y, x) >= 100 || label_map.at<uchar>(y, x) == 4 || label_map.at<uchar>(y, x) == 5) {
+           obstacle_mask.at<uchar>(y, x) = 255;
+         }
+       }

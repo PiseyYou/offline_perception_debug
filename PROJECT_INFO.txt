@@ -1,0 +1,145 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║                   OFFLINE PERCEPTION DEBUG TOOL                        ║
+║                  立体视觉离线感知调试工具                              ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+📍 项目位置
+   /home/youfeng/CLionProjects/05-offline_debug_fusion/offline_perception_debug/
+
+📅 创建时间
+   2026-01-08
+
+🎯 项目目标
+   将ROS2版本的立体视觉感知系统改造为独立的离线调试工具
+   - 去除ROS2依赖
+   - 支持批量处理
+   - 生成点云三视图可视化
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📂 目录结构
+
+offline_perception_debug/
+├── CMakeLists.txt               ← CMake构建配置
+├── build.sh                     ← 编译脚本
+├── run.sh                       ← 运行脚本
+├── test_demo.sh                 ← 演示测试脚本
+├── README.md                    ← 完整使用文档
+├── PROJECT_INFO.txt             ← 本文件
+├── .gitignore                   ← Git忽略规则
+│
+├── src/
+│   └── offline_perception_debug.cpp    (378行) ← 主程序
+│
+├── include/                     ← 头文件目录（预留）
+│
+├── data/
+│   ├── input/                   ← 放置输入立体图像
+│   └── output/                  ← 输出处理结果
+│
+├── build/                       ← CMake构建目录
+│
+└── docs/
+    └── QUICKSTART.md            ← 快速开始指南
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 快速开始 (3步)
+
+1. 准备数据
+   cp /your/path/*_left.jpg data/input/
+   cp /your/path/*_right.jpg data/input/
+
+2. 编译
+   ./build.sh
+
+3. 运行
+   ./run.sh
+
+或者直接测试演示：
+   ./test_demo.sh
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✨ 核心功能
+
+✅ 无ROS2依赖          - 仅需OpenCV + PCL + Eigen3
+✅ 批量处理            - 自动处理文件夹中的所有图像对
+✅ 点云三视图          - XY/XZ/YZ三个视角投影
+✅ 多格式输出          - PCD、深度图、标签图、可视化图像
+✅ 详细性能日志        - 每步耗时统计
+✅ 易于调试            - 标准C++，GDB友好
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📤 输出文件 (示例: frame001)
+
+frame001.pcd                      ← 点云文件 (CloudCompare)
+frame001_depth.jpg                ← 深度图可视化
+frame001_labels.png               ← 语义标签图
+frame001_view_xy.jpg              ← 俯视图 ⬆️
+frame001_view_xz.jpg              ← 侧视图 ➡️
+frame001_view_yz.jpg              ← 正视图 👁️
+frame001_view_combined.jpg        ← 三视图组合
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 依赖项
+
+必需:
+  • OpenCV 4.x       - 图像处理和立体视觉
+  • PCL 1.10+        - 点云处理
+  • Eigen3           - 线性代数
+  • C++17编译器      - GCC 7+ 或 Clang 5+
+
+安装命令 (Ubuntu/Debian):
+  sudo apt install libopencv-dev libpcl-dev libeigen3-dev
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 文档
+
+• README.md              - 完整使用文档
+• docs/QUICKSTART.md     - 3分钟快速上手
+• PROJECT_INFO.txt       - 本文件
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  重要说明
+
+1. 当前使用OpenCV示例算法（StereoSGBM）作为演示
+2. 要集成实际算法，参考README.md中的"集成实际感知算法"章节
+3. 输入图像必须遵循 *_left.* 和 *_right.* 命名规则
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔗 相关项目
+
+原ROS2版本:
+  /home/youfeng/CLionProjects/12-evb/evb_test/src/stereo_perception_multi2/
+
+主要改动:
+  • 移除 rclcpp::Node      → 普通C++类
+  • 移除 Topic订阅/发布    → 文件I/O
+  • 移除 RCLCPP_INFO       → std::cout
+  • 新增 点云三视图可视化
+  • 新增 批量处理能力
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📧 技术支持
+
+如有问题，请查看:
+  1. README.md - 详细文档和FAQ
+  2. docs/QUICKSTART.md - 快速开始指南
+  3. 代码注释 - src/offline_perception_debug.cpp
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✨ 开始使用吧！
+
+  ./build.sh        # 编译
+  ./test_demo.sh    # 运行演示测试
+  ./run.sh          # 处理实际数据
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

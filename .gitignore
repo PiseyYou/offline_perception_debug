@@ -1,0 +1,29 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Output data (keep .gitkeep)
+data/output/*
+!data/output/.gitkeep
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Compiled files
+*.o
+*.so
+*.a
+
+# Executable
+offline_perception_debug
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
