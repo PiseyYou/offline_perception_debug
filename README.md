@@ -5,7 +5,7 @@
 ## 项目信息
 
 - **项目路径**: `/home/youfeng/CLionProjects/05-offline_debug_fusion/offline_perception_debug/`
-- **版本**: K1.1.5
+- **版本**: K1.1.5b
 - **创建时间**: 2026-01-08
 - **最后更新**: 2026-03-27
 

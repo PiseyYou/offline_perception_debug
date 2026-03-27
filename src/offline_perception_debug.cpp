@@ -1,12 +1,13 @@
 /**
  * @file offline_perception_debug.cpp
- * @brief 离线感知调试工具 - 按照ROS2 mode (0-6) 逻辑实现
+ * @brief 离线感知调试工具 - 按照ROS2 mode (0-7) 逻辑实现
  * @description 支持多种感知模式：depth-only, detection, segmentation,
  * multi-task等
  */
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -22,6 +23,7 @@
 // 引入感知模块头文件
 #include "cdt_perception.h"
 #include "det_perception.h"
+#include "dsg_perception.h"
 #include "multi_sub_perception.h"
 #include "offline_utils.hpp"
 #include "qr_cs_perception.h"
@@ -68,7 +70,7 @@ public:
     // 配置参数
     struct Config
     {
-        int infer_mode = 5; // 推理模式 0-6
+        int infer_mode = 5; // 推理模式 0-7
         int erode_pixel = 205; // 腐蚀像素
         float area_threshold = 0.5; // 区域阈值
         float detection_threshold = 0.51; // 检测阈值
@@ -89,6 +91,7 @@ public:
         // string sub_model = "../models/sub_20260105_640x384.bin";
         // string sub_model = "../models/sub_20260211_640x384.bin";
         string sub_model = "../models/sub_20260303_640x384.bin";
+        string dsg_model = "../models/dsg_20260115_640x384.bin";
     };
 
     struct ProcessResult
@@ -152,6 +155,11 @@ public:
         {
             mulSubPerception.perception_init(config_.sub_model.c_str());
             cout << "[✓] Sub-task model initialized: " << config_.sub_model << endl;
+        }
+        else if (config_.infer_mode == 7)
+        {
+            dsgPerception_.perception_init(config_.dsg_model.c_str());
+            cout << "[✓] DSG model initialized: " << config_.dsg_model << endl;
         }
 
         cout << "===================================================\n" << endl;
@@ -222,6 +230,9 @@ public:
         case 6:
             result = processMode6(left_img, right_img, grayImageLeft, grayImageRight);
             break;
+        case 7:
+            result = processMode7(left_img, right_img, grayImageLeft, grayImageRight);
+            break;
         default:
             cerr << "[Error] Invalid mode: " << config_.infer_mode << endl;
             break;
@@ -249,6 +260,7 @@ private:
     multi_perception multiPerception_;
     qr_cs_perception qrCsPerception_;
     multi_perception mulSubPerception;
+    dsg_perception dsgPerception_;
     int current_frame_id_ = 0; // 当前处理的帧ID
     string current_image_name_ = ""; // 当前处理的图像文件名（不含扩展名）
 
@@ -745,6 +757,221 @@ private:
 
         return result;
     }
+
+    // Mode 7: DSG (Dark Seg) - 夜间暗色分割
+    ProcessResult processMode7(const Mat& left, const Mat& right, Mat grayImageL,
+                               Mat grayImageR)
+    {
+        ProcessResult result;
+        result.mode_name = "DSG";
+
+        cout << "[Mode 7] DSG Dark Seg task recognition start" << endl;
+
+        cv::Mat croppedImg;
+        if (left.rows == 480)
+        {
+            cv::Rect cropRegion(0, 0, left.cols, 432);
+            croppedImg = left(cropRegion).clone();
+        }
+        else
+        {
+            croppedImg = left;
+        }
+
+        if (croppedImg.empty())
+        {
+            cerr << "[DSG] croppedImg is empty, skipping" << endl;
+            return result;
+        }
+
+        // 将640x432的croppedImg resize到640x384送入分割模型
+        cv::Mat croppedImg384;
+        cv::resize(croppedImg, croppedImg384, cv::Size(640, 384), 0, 0, cv::INTER_LINEAR);
+        cv::Mat dst_label384(384, 640, CV_8UC1);
+        dsgPerception_.process_infer_match(croppedImg384, dst_label384);
+
+        // 将分割结果从640x384 resize回640x432
+        cv::Mat dst_label(432, 640, CV_8UC1);
+        cv::resize(dst_label384, dst_label, cv::Size(640, 432), 0, 0, cv::INTER_NEAREST);
+
+        result.label_map = dst_label.clone();
+
+        pcl::PointCloud<pcl::PointXYZRGBL> xyz_rgbl_cloud, out_xyz_rgbl_cloud;
+        std::vector<Detection> dst_detections;
+
+        if (!grayImageR.empty())
+        {
+            // 视差图和深度图在640x480全尺寸上计算
+            Mat disparity = stereo_multi_match.stereo_multi_process_depth(grayImageL, grayImageR);
+
+            // 直接传640x432的dst_label，stereo_multi_process_filter内部已有padding到640x480的逻辑（Bug2 fix）
+            bool enable_height_filter_ = true;
+            Mat depth_cal_full = stereo_multi_match.stereo_multi_process_filter(
+                disparity, dst_label, enable_height_filter_);
+
+            // 将640x480的深度图裁剪到640x432
+            cv::Mat depth_cal_432;
+            if (!depth_cal_full.empty() && depth_cal_full.rows >= 432)
+                depth_cal_432 = depth_cal_full(cv::Rect(0, 0, depth_cal_full.cols, 432)).clone();
+            else
+                depth_cal_432 = depth_cal_full;
+
+            // 夜间深度图过滤
+            filterNighttimeDepth(depth_cal_432, dst_label);
+
+            // 夜间暗色抑制：RGB接近黑色的像素label置为2，避免夜间上坡误识别映射到点云
+            applyDarknessFilter(dst_label, croppedImg);
+
+            // 草地颜色约束：label=3中非棕色/非土色HSV区域降级为grass(2)
+            {
+                cv::Mat blurred_dsg, hsv_dsg;
+                cv::GaussianBlur(croppedImg, blurred_dsg, cv::Size(5, 5), 0);
+                cv::cvtColor(blurred_dsg, hsv_dsg, cv::COLOR_BGR2HSV);
+                cv::Mat label3_mask_dsg;
+                cv::compare(dst_label, 3, label3_mask_dsg, cv::CMP_EQ);
+                cv::Mat brown_mask_dsg;
+                cv::inRange(hsv_dsg, cv::Scalar(10, 30, 30), cv::Scalar(30, 255, 255), brown_mask_dsg);
+                cv::Mat not_brown_dsg;
+                cv::bitwise_not(brown_mask_dsg, not_brown_dsg);
+                cv::Mat downgrade_mask = label3_mask_dsg & not_brown_dsg;
+                cv::Mat k7 = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7));
+                cv::morphologyEx(downgrade_mask, downgrade_mask, cv::MORPH_OPEN, k7);
+                dst_label.setTo(2, downgrade_mask);
+            }
+
+            // 在640x432尺寸上做融合：depth_cal_432 + dst_label + croppedImg 均为640x432
+            stereo_multi_match.stereo_process_pci_depth_rgb_seg_det_fusion(
+                depth_cal_432, dst_label, dst_detections, croppedImg,
+                xyz_rgbl_cloud, out_xyz_rgbl_cloud);
+
+            // 夜间点云过滤
+            filterNighttimePointCloud(out_xyz_rgbl_cloud, dst_label);
+
+            // label=3 距离-点数双重阈值：近端(z<1.5m)road点过少时降级为grass
+            {
+                int label3_near_count = 0;
+                for (const auto &pt : out_xyz_rgbl_cloud.points)
+                    if (pt.label == 3 && pt.z < 1.5f) label3_near_count++;
+                if (label3_near_count < 10)
+                    for (auto &pt : out_xyz_rgbl_cloud.points)
+                        if (pt.label == 3) pt.label = 2;
+            }
+
+            result.point_cloud = out_xyz_rgbl_cloud;
+            result.depth_map = depth_cal_432;
+        }
+
+        if (config_.m_enable_debug_show)
+        {
+            Mat img_seg_show;
+            Mat pure_seg_mat = drawResult(croppedImg, dst_label, dst_detections, img_seg_show);
+            cv::resize(pure_seg_mat, pure_seg_mat, Size(640, 384));
+            cv::resize(img_seg_show, img_seg_show, Size(640, 384));
+            cv::resize(croppedImg, croppedImg, Size(640, 384));
+
+            Mat origin_seg, final_compared;
+            cv::hconcat(croppedImg, pure_seg_mat, origin_seg);
+            cv::hconcat(origin_seg, img_seg_show, origin_seg);
+
+            stereo_point_cloud stereoPointCloud;
+            if (!grayImageR.empty() && !out_xyz_rgbl_cloud.empty())
+            {
+                Mat xyz_rgbl;
+                stereoPointCloud.show_xyz_rgbl_plane_point_cloud_final(out_xyz_rgbl_cloud, xyz_rgbl);
+                cv::vconcat(origin_seg, xyz_rgbl, final_compared);
+                string finalPcdPath = config_.finalPcdDir + current_image_name_ + "_dsg";
+                savePcdfile_with_rgb_label(out_xyz_rgbl_cloud, finalPcdPath);
+            }
+            else
+            {
+                final_compared = origin_seg;
+            }
+
+            string finalPicPath = config_.finalPicDir + current_image_name_ + "_dsg.jpg";
+            imwrite(finalPicPath, final_compared);
+        }
+
+        return result;
+    }
+
+    // DSG helper: 夜间暗色像素label置为2
+    static void applyDarknessFilter(cv::Mat &label, const cv::Mat &bgrImg,
+                                    int darkness_threshold = 30)
+    {
+        if (label.empty() || bgrImg.empty() || label.size() != bgrImg.size())
+            return;
+        for (int y = 0; y < label.rows; ++y)
+        {
+            const cv::Vec3b *bgr_row = bgrImg.ptr<cv::Vec3b>(y);
+            uchar *label_row = label.ptr<uchar>(y);
+            for (int x = 0; x < label.cols; ++x)
+            {
+                const cv::Vec3b &px = bgr_row[x];
+                if (px[0] <= darkness_threshold &&
+                    px[1] <= darkness_threshold &&
+                    px[2] <= darkness_threshold)
+                    label_row[x] = 2;
+            }
+        }
+    }
+
+    // DSG helper: 夜间深度图过滤（闭运算+高斯模糊+开运算去孤立点）
+    static void filterNighttimeDepth(cv::Mat &depth, const cv::Mat &label_map)
+    {
+        if (depth.empty())
+            return;
+        cv::Mat kernel5 = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+        cv::Mat kernel7 = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7, 7));
+        cv::Mat tmp;
+        cv::morphologyEx(depth, tmp, cv::MORPH_CLOSE, kernel5);
+        cv::Mat depth_filtered = tmp.clone();
+        if (tmp.rows > 300)
+        {
+            cv::Mat roi_in  = tmp(cv::Rect(0, 300, tmp.cols, tmp.rows - 300));
+            cv::Mat roi_out = depth_filtered(cv::Rect(0, 300, tmp.cols, tmp.rows - 300));
+            cv::GaussianBlur(roi_in, roi_out, cv::Size(11, 1), 0);
+        }
+        cv::Mat valid_mask;
+        cv::threshold(depth_filtered, valid_mask, 0, 255, cv::THRESH_BINARY);
+        valid_mask.convertTo(valid_mask, CV_8UC1);
+        cv::Mat opened_mask;
+        cv::morphologyEx(valid_mask, opened_mask, cv::MORPH_OPEN, kernel7);
+        depth_filtered.setTo(0, opened_mask == 0);
+        depth = depth_filtered;
+    }
+
+    // DSG helper: 夜间点云体素网格过滤（保留体素内>=3个点的点）
+    static void filterNighttimePointCloud(pcl::PointCloud<pcl::PointXYZRGBL> &cloud,
+                                          const cv::Mat &label_map)
+    {
+        if (cloud.empty())
+            return;
+        const float inv_grid = 10.0f;
+        auto encode_key = [inv_grid](float x, float y, float z) -> int64_t {
+            int64_t ix = static_cast<int64_t>(std::floor(x * inv_grid));
+            int64_t iy = static_cast<int64_t>(std::floor(y * inv_grid));
+            int64_t iz = static_cast<int64_t>(std::floor(z * inv_grid));
+            return ix * 1000000LL + iy * 1000LL + iz;
+        };
+        std::unordered_map<int64_t, std::vector<size_t>> grid;
+        grid.reserve(cloud.size());
+        for (size_t i = 0; i < cloud.size(); i++)
+        {
+            const auto &pt = cloud[i];
+            if (std::isnan(pt.x) || std::isnan(pt.y) || std::isnan(pt.z))
+                continue;
+            grid[encode_key(pt.x, pt.y, pt.z)].push_back(i);
+        }
+        pcl::PointCloud<pcl::PointXYZRGBL> filtered;
+        filtered.reserve(cloud.size());
+        for (const auto &[key, indices] : grid)
+        {
+            if (indices.size() >= 3)
+                for (size_t idx : indices)
+                    filtered.push_back(cloud[idx]);
+        }
+        cloud = std::move(filtered);
+    }
 };
 
 // 主程序
@@ -757,7 +984,7 @@ int main(int argc, char** argv)
     // 读取配置
     OfflinePerceptionProcessor::Config config;
     // TODO: 从config.yaml读取配置（目前固定为 mode 6：Sub-task）
-    config.infer_mode = 6;
+    config.infer_mode = 7;
     bool ret_pcd_dir = false;
 
     // 默认路径
@@ -824,6 +1051,11 @@ int main(int argc, char** argv)
     {
         config.finalPicDir =
             input_dir + "/cdt_sub_" + mode_suffix + "_0306/";
+    }
+    else if (config.infer_mode == 7)
+    {
+        config.finalPicDir =
+            input_dir + "/dsg_" + mode_suffix + "_0306/";
     }
     config.finalPcdDir = input_dir + "/pcd_" + mode_suffix +
         "_0306/"; // 设置最终PCD输出目录
