@@ -1180,7 +1180,7 @@ int main(int argc, char **argv)
   // 读取配置
   OfflinePerceptionProcessor::Config config;
   // TODO: 从config.yaml读取配置（目前固定为 mode 6：Sub-task）
-  config.infer_mode = 6;
+  config.infer_mode = 7;
   bool ret_pcd_dir = false;
 
   // 默认路径
@@ -1199,7 +1199,8 @@ int main(int argc, char **argv)
   // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/no_point/";
   // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/no_point/";
   // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/no_point/";
-  string input_dir = "/home/youfeng/debug/03/06/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061129/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061129_0/images/debug/error/";
+  // string input_dir = "/home/youfeng/debug/03/06/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061129/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061129_0/images/debug/error/";
+  string input_dir = "/home/youfeng/debug/03/0327/rosbag_LK-MR6P1US000123_camera_202603270304/stereo_output_rosbag_LK-MR6P1US000123_camera_202603270304_0/images/";
   cout << "\nInput directory: " << input_dir << endl;
 
   // 构造最终结果输出目录

@@ -156,6 +156,7 @@ set(SOURCES
         src/cdt_perception.cpp
         src/qr_cs_perception.cpp
         src/cls_perception.cpp
+        src/dsg_perception.cpp
         src/multiscale_filter.cpp
         src/stereo_point_cloud_rgbl.cpp
 )
@@ -168,6 +169,19 @@ target_link_libraries(offline_perception_debug_432_sob  ${OpenCV_LIBS}  ${PCL_LI
 )
 
 install(TARGETS offline_perception_debug_432_sob
+        RUNTIME DESTINATION bin
+)
+
+set(SOURCES
+        src/dsg_mono_perception.cpp
+        src/dsg_perception.cpp
+)
+
+add_executable(dsg_mono_perception ${SOURCES})
+
+target_link_libraries(dsg_mono_perception ${OpenCV_LIBS} ${PCL_LIBRARIES} ${LINK_libs} ${JSONCPP_LIBRARIES})
+
+install(TARGETS dsg_mono_perception
         RUNTIME DESTINATION bin
 )
 

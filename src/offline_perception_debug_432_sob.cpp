@@ -21,6 +21,7 @@
 // 引入感知模块头文件
 #include "cdt_perception.h"
 #include "det_perception.h"
+#include "dsg_perception.h"
 #include "multi_sub_perception.h"
 #include "offline_utils.hpp"
 #include "qr_cs_perception.h"
@@ -116,17 +117,41 @@ cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
                             std::vector<Detection> &dect_src,
                             cv::Mat &img_seg_show)
 {
-
   // 1. 生成颜色图 (在较小的尺寸上操作)
   cv::Mat parsing_img(img_lab.size(), CV_8UC3);
   convertIdToRGBOptimized(img_lab, parsing_img);
 
   // 2. 将颜色图缩放到原图大小
-  // 如果 img_lab 和 img_src 尺寸一致，此步会自动跳过或非常快
   if (parsing_img.size() != img_src.size())
   {
     cv::resize(parsing_img, parsing_img, img_src.size(), 0, 0,
                cv::INTER_NEAREST);
+  }
+
+  // 2.5 消除底部 label==2 绿色伪影带：
+  //   从底部向上扫描 img_lab，找到连续的、95%以上像素为 label==2 的行，
+  //   将 parsing_img 对应行直接替换为 img_src 原图，使该区域融合后无绿色覆盖。
+  {
+    int artifact_start = img_lab.rows;
+    for (int i = img_lab.rows - 1; i >= 0; --i)
+    {
+      const uchar *row_ptr = img_lab.ptr<uchar>(i);
+      int cnt2 = 0;
+      for (int j = 0; j < img_lab.cols; ++j)
+        if (row_ptr[j] == 2) ++cnt2;
+      if (static_cast<float>(cnt2) / img_lab.cols > 0.95f)
+        artifact_start = i;
+      else
+        break;
+    }
+    if (artifact_start < img_lab.rows)
+    {
+      float row_scale = static_cast<float>(parsing_img.rows) / img_lab.rows;
+      int ps_start = static_cast<int>(artifact_start * row_scale);
+      // 将伪影行的颜色图替换为原图（alpha=1 融合等价于直接复制原图）
+      img_src(cv::Rect(0, ps_start, img_src.cols, img_src.rows - ps_start))
+          .copyTo(parsing_img(cv::Rect(0, ps_start, parsing_img.cols, parsing_img.rows - ps_start)));
+    }
   }
 
   // 3. 图像融合 (Alpha Blending)
@@ -254,6 +279,7 @@ public:
     // string sub_model = "../models/sub_20260105_640x384.bin";
     // string sub_model = "../models/sub_20260225_640x384.bin";
     string sub_model = "../models/sub_20260303_640x384.bin";
+    string dsg_model = "../models/dsg_20260211_640x384.bin";
   };
 
   struct ProcessResult
@@ -315,6 +341,11 @@ public:
     {
       mulSubPerception.perception_init(config_.sub_model.c_str());
       cout << "[✓] Sub-task model initialized: " << config_.sub_model << endl;
+    }
+    else if (config_.infer_mode == 7)
+    {
+      dsgPerception_.perception_init(config_.dsg_model.c_str());
+      cout << "[✓] DSG model initialized: " << config_.dsg_model << endl;
     }
 
     cout << "===================================================\n"
@@ -386,6 +417,9 @@ public:
     case 6:
       result = processMode6(left_img, right_img, grayImageLeft, grayImageRight);
       break;
+    case 7:
+      result = processMode7(left_img, right_img, grayImageLeft, grayImageRight);
+      break;
     default:
       cerr << "[Error] Invalid mode: " << config_.infer_mode << endl;
       break;
@@ -413,6 +447,7 @@ private:
   multi_perception multiPerception_;
   qr_cs_perception qrCsPerception_;
   multi_perception mulSubPerception;
+  dsg_perception dsgPerception_;
   int current_frame_id_ = 0;       // 当前处理的帧ID
   string current_image_name_ = ""; // 当前处理的图像文件名（不含扩展名）
 
@@ -1419,6 +1454,161 @@ private:
 
     return result;
   }
+
+  // Mode 7: DSG (Dark Seg) - 夜间语义分割融合深度
+  ProcessResult processMode7(const Mat &left, const Mat &right, Mat grayImageL,
+                             Mat grayImageR)
+  {
+    (void)right;
+    ProcessResult result;
+    result.mode_name = "DSG";
+
+    cout << "[Mode 7] DSG dark segmentation fusion depth" << endl;
+
+    // Step 1: DSG推理
+    auto infer_start = chrono::high_resolution_clock::now();
+
+    // 裁剪 640x480 -> 640x432，用于显示和融合
+    cv::Mat croppedImg;
+    if (left.rows == 480)
+    {
+      cv::Rect cropRegion(0, 0, left.cols, 432);
+      croppedImg = left(cropRegion).clone();
+    }
+    else
+    {
+      croppedImg = left.clone();
+    }
+
+    // 直接从 640x480 resize 到 640x384 送入模型（保留完整视野）
+    cv::Mat croppedImg384;
+    cv::resize(croppedImg, croppedImg384, cv::Size(640, 384), 0, 0, cv::INTER_LINEAR);
+
+    // 模型推理：在 640x384 上
+    cv::Mat dst_label384(384, 640, CV_8UC1, cv::Scalar(1));
+    dsgPerception_.process_infer_match(croppedImg384, dst_label384);
+
+    // 底部过滤已移除：原逻辑是补偿坐标错位引入的伪影，坐标修复后不再需要
+
+    // 诊断：统计 dst_label384 中各标签的像素数
+    {
+      std::map<int, int> label_counts;
+      for (int r = 0; r < dst_label384.rows; ++r)
+        for (int c = 0; c < dst_label384.cols; ++c)
+          label_counts[(int)dst_label384.at<uchar>(r, c)]++;
+      cout << "[DSG Debug] dst_label384 label distribution (" << dst_label384.cols
+           << "x" << dst_label384.rows << "):" << endl;
+      for (const auto &kv : label_counts)
+        cout << "  label=" << kv.first << " count=" << kv.second << endl;
+      // ���印最后5行的第320列值，确认底部是否有非1值
+      cout << "[DSG Debug] bottom 5 rows col=320: ";
+      for (int r = dst_label384.rows - 5; r < dst_label384.rows; ++r)
+        cout << (int)dst_label384.at<uchar>(r, 320) << " ";
+      cout << endl;
+      // 保存可视化标签图供检查（label*80使1/3/5可见）
+      cv::Mat label_vis;
+      dst_label384.convertTo(label_vis, CV_8UC1);
+      label_vis *= 50;
+      // cv::imwrite(config_.finalPicDir + current_image_name_ + "_dsg_label384_debug.png", label_vis);
+    }
+
+    // 将分割结果从 640x384 resize 回 640x432
+    cv::Mat label_432;
+    cv::resize(dst_label384, label_432, cv::Size(640, 432), 0, 0, cv::INTER_NEAREST);
+
+    auto infer_end = chrono::high_resolution_clock::now();
+    cout << "[Step 1/4] DSG inference done: "
+         << chrono::duration<double, milli>(infer_end - infer_start).count()
+         << " ms" << endl;
+
+    result.label_map = label_432.clone();
+
+    // Step 2: 深度计算 (在 640x480 全尺寸下)
+    pcl::PointCloud<pcl::PointXYZRGBL> xyz_rgbl_cloud, out_xyz_rgbl_cloud;
+
+    if (!grayImageR.empty())
+    {
+      auto depth_start = chrono::high_resolution_clock::now();
+
+      Mat disparity =
+          stereo_multi_match.stereo_multi_process_depth(grayImageL, grayImageR);
+
+      // label_map 从 640x432 pad 到 640x480，底部填充 1（DSG背景标签，DSG只有1/3/5）
+      cv::Mat label_480 = cv::Mat::ones(480, 640, result.label_map.type());
+      result.label_map.copyTo(label_480(cv::Rect(0, 0, 640, 432)));
+
+      Mat depth_480 = stereo_multi_match.stereo_multi_process_filter(
+          disparity, label_480, config_.enable_height_filter_);
+
+      // 裁剪 depth 到 640x432 用于融合
+      cv::Mat depth_cal = depth_480(cv::Rect(0, 0, 640, 432)).clone();
+
+      auto depth_end = chrono::high_resolution_clock::now();
+      cout << "[Step 2/4] Depth computation done: "
+           << chrono::duration<double, milli>(depth_end - depth_start).count()
+           << " ms" << endl;
+
+      // Step 3: 深度补全
+      auto inpaint_start = chrono::high_resolution_clock::now();
+      std::vector<Detection> empty_dets;
+      Mat depth_inpainted = depth_cal.clone();
+      if (config_.depth_inpainting_strategy_ > 0 && !depth_cal.empty())
+      {
+        if (config_.depth_inpainting_strategy_ == 1 || config_.depth_inpainting_strategy_ == 3)
+          depth_inpainted = depthInpaintingByDetections(depth_inpainted, result.label_map, empty_dets);
+        if (config_.depth_inpainting_strategy_ == 2 || config_.depth_inpainting_strategy_ == 3)
+          depth_inpainted = depthInpaintingForObstacles(depth_inpainted, result.label_map);
+      }
+      auto inpaint_end = chrono::high_resolution_clock::now();
+      cout << "[Step 3/4] Depth inpainting done: "
+           << chrono::duration<double, milli>(inpaint_end - inpaint_start).count()
+           << " ms" << endl;
+
+      // Step 4: 融合 (640x432)
+      auto fusion_start = chrono::high_resolution_clock::now();
+      stereo_multi_match.stereo_process_pci_depth_rgb_seg_det_fusion(
+          depth_inpainted, result.label_map, empty_dets, croppedImg,
+          xyz_rgbl_cloud, out_xyz_rgbl_cloud);
+      auto fusion_end = chrono::high_resolution_clock::now();
+      cout << "[Step 4/4] Fusion done: "
+           << chrono::duration<double, milli>(fusion_end - fusion_start).count()
+           << " ms" << endl;
+    }
+
+    if (config_.m_enable_debug_show)
+    {
+      Mat img_seg_show;
+      std::vector<Detection> empty_dets;
+      Mat pure_seg_mat = drawResultOptimized(croppedImg, result.label_map,
+                                             empty_dets, img_seg_show);
+      Mat origin_seg;
+      cv::hconcat(croppedImg, pure_seg_mat, origin_seg);
+      cv::hconcat(origin_seg, img_seg_show, origin_seg);
+
+      Mat xyz_rgbl, final_compared;
+      stereo_point_cloud stereoPointCloud;
+      if (!grayImageR.empty())
+      {
+        stereoPointCloud.show_xyz_rgbl_plane_point_cloud_final(
+            out_xyz_rgbl_cloud, xyz_rgbl);
+        cv::vconcat(origin_seg, xyz_rgbl, final_compared);
+        string finalPcdPath =
+            config_.finalPcdDir + current_image_name_ + "_dsg";
+        savePcdfile_with_rgb_label(out_xyz_rgbl_cloud, finalPcdPath);
+      }
+      else
+      {
+        final_compared = origin_seg;
+      }
+
+      string finalPicPath =
+          config_.finalPicDir + current_image_name_ + "_dsg.jpg";
+      imwrite(finalPicPath, final_compared);
+    }
+
+    result.point_cloud = out_xyz_rgbl_cloud;
+    return result;
+  }
 };
 
 // 主程序
@@ -1432,26 +1622,15 @@ int main(int argc, char **argv)
   // 读取配置
   OfflinePerceptionProcessor::Config config;
   // TODO: 从config.yaml读取配置（目前固定为 mode 6：Sub-task）
-  config.infer_mode = 6;
+  config.infer_mode = 7;
   bool ret_pcd_dir = false;
 
   // 默认路径
-  // string input_dir = "/home/youfeng/debug/03/03/userdata/rosbag_record/rosbag_LK-MR6P1US000107_camera_202603031104/stereo_output_rosbag_LK-MR6P1US000107_camera_202603031104_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/03/userdata/rosbag_record/rosbag_LK-MR6P1US000107_camera_202603031122/stereo_output_rosbag_LK-MR6P1US000107_camera_202603031122_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/03/userdata/rosbag_record/rosbag_LK-MR6P1US000107_camera_202603030959/stereo_output_rosbag_LK-MR6P1US000107_camera_202603030959_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/03/avoiding_people/rosbag_LK-MR6P1US000107_camera_202603031816/stereo_output_rosbag_LK-MR6P1US000107_camera_202603031816_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/debug/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/bottle/";
-  // string input_dir = "/home/youfeng/debug/03/05/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603051439/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603051439_0_filtered_20260305_1439_to_20260305_1441/images/error/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061618/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061618_0_filtered_20260306_1619_to_20260306_1621/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061439/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061439_0_filtered_20260306_1441_to_20260306_1443/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061551/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061551_0_filtered_20260306_1552_to_20260306_1554/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/no_point/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/no_point/";
   // string input_dir = "/home/youfeng/debug/03/02/rosbag_LK-MR6P1US000107_camera_202603021453/stereo_output_rosbag_LK-MR6P1US000107_camera_202603021453_0/images/extracted_interval/brick/";
-  string input_dir = "/home/youfeng/debug/03/06/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061129/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061129_0/images/debug/error/";
+  // string input_dir = "/home/youfeng/debug/03/0327/rosbag_LK-MR6P1US000111_camera_202603220059/false_obstacle_analysis/camera_bag/images/";
+  // string input_dir = "/home/youfeng/debug/03/0327/rosbag_LK-MR6P1US000111_camera_202603220059/false_obstacle_analysis/camera_bag/images/debug/";
+  // string input_dir = "/home/youfeng/debug/custom/0123/0330/stereo/";
+  string input_dir = "/home/youfeng/debug/custom/0123/20260331-20260331/";
   cout << "\nInput directory: " << input_dir << endl;
 
   // 构造最终结果输出目录
@@ -1460,7 +1639,7 @@ int main(int argc, char **argv)
 
   // 构造配置参数后缀
   string config_suffix = "";
-  if (config.infer_mode == 6)
+  if (config.infer_mode == 6 || config.infer_mode == 7)
   {
     // 添加红砖颜色后处理参数
     if (config.enable_red_brick_refine_)
@@ -1482,6 +1661,10 @@ int main(int argc, char **argv)
   {
     config.finalPicDir = input_dir + "/cdt_sub_" + mode_suffix + config_suffix + "_0310_det_0.3_pc_432/";
   }
+  else if (config.infer_mode == 7)
+  {
+    config.finalPicDir = input_dir + "/dsg_" + mode_suffix + config_suffix + "_432/";
+  }
   config.finalPcdDir =
       input_dir + "/pcd_" + mode_suffix + config_suffix + "_0310_432/"; // 设置最终PCD输出目录
 
@@ -1496,7 +1679,7 @@ int main(int argc, char **argv)
   cout << "Erode pixel: " << config.erode_pixel << endl;
   cout << "Area threshold: " << config.area_threshold << endl;
   cout << "Detection threshold: " << config.detection_threshold << endl;
-  if (config.infer_mode == 6)
+  if (config.infer_mode == 6 || config.infer_mode == 7)
   {
     cout << "Red brick refine: " << (config.enable_red_brick_refine_ ? "enabled" : "disabled") << endl;
     if (config.enable_red_brick_refine_)
