@@ -1,4 +1,5 @@
 #include "offline_utils.hpp"
+#include "perception.h"
 
 #include <cfloat>
 #include <fstream>
@@ -661,60 +662,57 @@ static const std::array<cv::Vec3b, 256> getColorLookupTable()
 
   return lut;
 }
-//
-// void convertIdToRGBOptimized(const cv::Mat &img_lab, cv::Mat &parsing_img) {
-//     static const auto lut = getColorLookupTable();
-//
-//     int rows = img_lab.rows;
-//     int cols = img_lab.cols;
-//
-//     for (int i = 0; i < rows; ++i) {
-//         const uchar* row_ptr = img_lab.ptr<uchar>(i);
-//         cv::Vec3b* out_ptr = parsing_img.ptr<cv::Vec3b>(i);
-//         for (int j = 0; j < cols; ++j) {
-//             out_ptr[j] = lut[row_ptr[j]];
-//         }
-//     }
-// }
-//
-// cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
-//                            std::vector<Detection> &dect_src, cv::Mat &img_seg_show) {
-//
-//     // 1. 生成颜色图 (在较小的尺寸上操作)
-//     cv::Mat parsing_img(img_lab.size(), CV_8UC3);
-//     convertIdToRGBOptimized(img_lab, parsing_img);
-//
-//     // 2. 将颜色图缩放到原图大小
-//     // 如果 img_lab 和 img_src 尺寸一致，此步会自动跳过或非常快
-//     if (parsing_img.size() != img_src.size()) {
-//         cv::resize(parsing_img, parsing_img, img_src.size(), 0, 0, cv::INTER_NEAREST);
-//     }
-//
-//     // 3. 图像融合 (Alpha Blending)
-//     // 建议先融合，这样绘制的框和文字才不会被半透明遮盖
-//     float alpha_f = 0.6f;
-//     cv::addWeighted(img_src, alpha_f, parsing_img, 1.0f - alpha_f, 0.0, img_seg_show);
-//
-//     // 4. 在融合后的图上绘制检测框
-//     for (const auto& det : dect_src) {
-//         cv::Rect rect_tmp(det.bbox.xmin, det.bbox.ymin,
-//                          (det.bbox.xmax - det.bbox.xmin),
-//                          (det.bbox.ymax - det.bbox.ymin));
-//
-//         // 绘制矩形
-//         cv::rectangle(img_seg_show, rect_tmp, cv::Scalar(0, 255, 0), 2);
-//
-//         // 优化文字拼接：避免使用 stringstream，简单场景用 to_string 更好
-//         std::string label = "id_" + std::to_string(det.id) + ":" +
-//                             cv::format("%.2f", det.score);
-//
-//         cv::putText(img_seg_show, label,
-//                     cv::Point(det.bbox.xmin, std::max(det.bbox.ymin + 15, 15)),
-//                     cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
-//     }
-//
-//     return parsing_img;
-// }
+void convertIdToRGBOptimized(const cv::Mat &img_lab, cv::Mat &parsing_img) {
+    static const auto lut = getColorLookupTable();
+
+    int rows = img_lab.rows;
+    int cols = img_lab.cols;
+
+    for (int i = 0; i < rows; ++i) {
+        const uchar* row_ptr = img_lab.ptr<uchar>(i);
+        cv::Vec3b* out_ptr = parsing_img.ptr<cv::Vec3b>(i);
+        for (int j = 0; j < cols; ++j) {
+            out_ptr[j] = lut[row_ptr[j]];
+        }
+    }
+}
+cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
+                            std::vector<Detection> &dect_src, cv::Mat &img_seg_show, bool enable_draw_box) {
+
+    // 1. 生成颜色图 (在较小的尺寸上操作)
+    cv::Mat parsing_img(img_lab.size(), CV_8UC3);
+    convertIdToRGBOptimized(img_lab, parsing_img);
+
+    // 2. 将颜色图缩放到原图大小
+    if (parsing_img.size() != img_src.size()) {
+        cv::resize(parsing_img, parsing_img, img_src.size(), 0, 0, cv::INTER_NEAREST);
+    }
+
+    // 3. 图像融合 (Alpha Blending)
+    float alpha_f = 0.6f;
+    cv::addWeighted(img_src, alpha_f, parsing_img, 1.0f - alpha_f, 0.0, img_seg_show);
+
+    // 4. 在融合后的图上绘制检测框（仅当 enable_draw_box 为 true 时）
+    if (enable_draw_box) {
+        for (const auto& det : dect_src) {
+            cv::Rect rect_tmp(det.bbox.xmin, det.bbox.ymin,
+                             (det.bbox.xmax - det.bbox.xmin),
+                             (det.bbox.ymax - det.bbox.ymin));
+
+            // 绘制矩形
+            cv::rectangle(img_seg_show, rect_tmp, cv::Scalar(0, 255, 0), 2);
+
+            std::string label = "id_" + std::to_string(det.id) + ":" +
+                                cv::format("%.2f", det.score);
+
+            cv::putText(img_seg_show, label,
+                        cv::Point(det.bbox.xmin, std::max((int)det.bbox.ymin + 15, 15)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1, cv::LINE_AA);
+        }
+    }
+
+    return parsing_img;
+}
 
 Mat colorizeSegImg_test(Mat &img_src, Mat &img_lab, Mat &img_seg_show)
 {

@@ -5,9 +5,9 @@
 ## 项目信息
 
 - **项目路径**: `/home/youfeng/CLionProjects/05-offline_debug_fusion/offline_perception_debug/`
-- **版本**: K1.1.5b
+- **版本**: K1.2.1
 - **创建时间**: 2026-01-08
-- **最后更新**: 2026-03-27
+- **最后更新**: 2026-04-03
 
 ## 功能特性
 
@@ -16,6 +16,8 @@
 ✅ **点云三视图** - 生成XY/XZ/YZ三个视角的投影图  
 ✅ **详细日志** - 输出每个处理步骤的耗时  
 ✅ **多格式输出** - PCD点云、深度图、标签图、可视化图像  
+✅ **DSG感知** - 支持 dsg_perception 多目标检测模块（K1.2.1新增）  
+✅ **Merged工具** - offline_perception_debug_merged 融合432/384px双高度逻辑（K1.2.1新增）
 
 ## 目录结构
 
@@ -24,10 +26,19 @@ offline_perception_debug/
 ├── CMakeLists.txt          # CMake构建配置
 ├── build.sh                # 编译脚本
 ├── run.sh                  # 运行脚本
+├── run_merged.sh           # 运行 merged 版本脚本（K1.2.1新增）
 ├── README.md               # 本文档
+├── config.yaml             # 配置文件（图像高度432px）
 ├── src/
-│   └── offline_perception_debug.cpp    # 主程序
-├── include/                # 头文件目录（预留）
+│   ├── offline_perception_debug.cpp         # 主程序
+│   ├── offline_perception_debug_merged.cpp  # 融合版本主程序（K1.2.1新增）
+│   ├── dsg_perception.cpp                   # DSG感知模块（K1.2.1新增）
+│   ├── unified_perception_processor.cpp     # 统一感知处理器（K1.2.1新增）
+│   └── ...                                  # 其他感知模块
+├── include/
+│   └── unified_perception_processor.h       # 统一感知处理器头文件（K1.2.1新增）
+├── models/
+│   └── dsg_multi_20260401_640x384.bin       # DSG模型文件（K1.2.1新增）
 ├── data/
 │   ├── input/              # 输入立体图像
 │   └── output/             # 输出结果
@@ -273,4 +284,12 @@ float cy = rgb.rows / 2.0f;
 
 ---
 
-**最后更新**: 2026-01-08
+**最后更新**: 2026-04-03
+
+## 版本历史
+
+| 版本 | 日期 | 主要变更 |
+|------|------|---------|
+| K1.2.1 | 2026-04-03 | 新增 dsg_perception 模块、offline_perception_debug_merged、config 高度改为432px |
+| K1.1.5b | 2026-03-27 | 集成 dsg_perception 头文件 |
+| K1.1.5 | 2026-03-24 | 初始版本上传 |

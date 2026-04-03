@@ -250,6 +250,16 @@ cv::Mat StereoMultiMatch::stereo_multi_process(cv::Mat &rectifyL,
     cv::divide(Bf, disparity_, depth_, 1, CV_32F); // 避免除零错误
     depth_.setTo(100.0f, ~disparity_valid_mask_);
 
+    // 应用形态学操作去除孤立点
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+    cv::Mat opened_depth, closed_depth;
+
+    // 开运算：先腐蚀后膨胀，去除小噪声点
+    cv::morphologyEx(depth_, opened_depth, cv::MORPH_OPEN, kernel);
+    // 闭运算：先膨胀后腐蚀，填补小孔洞
+    cv::morphologyEx(opened_depth, closed_depth, cv::MORPH_CLOSE, kernel);
+    depth_ = closed_depth;
+
     // 释放中间变量以减少内存占用
     rectifyL_processed.release();
     rectifyR_processed.release();

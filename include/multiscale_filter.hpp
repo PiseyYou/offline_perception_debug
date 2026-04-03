@@ -4,7 +4,7 @@
 #include <opencv2/opencv.hpp>
 #include <queue>
 #include <unordered_set>
-#include <perception_common.h>
+#include "perception.h"
 
 static bool checkLabelInRegion(const cv::Mat& img_label, Bbox &obj_box) __attribute__((unused));
 static bool checkLabelInRegion(const cv::Mat& img_label, Bbox &obj_box) {

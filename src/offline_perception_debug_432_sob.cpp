@@ -27,6 +27,7 @@
 #include "seg_perception.h"
 #include "stereo_multi_match.h"
 #include "stereo_point_cloud_rgbl.h"
+#include "dsg_perception.h"
 
 namespace fs = std::filesystem;
 using namespace cv;
@@ -94,80 +95,6 @@ static const std::array<cv::Vec3b, 256> getColorLookupTable()
   return lut;
 }
 
-void convertIdToRGBOptimized(const cv::Mat &img_lab, cv::Mat &parsing_img)
-{
-  static const auto lut = getColorLookupTable();
-
-  int rows = img_lab.rows;
-  int cols = img_lab.cols;
-
-  for (int i = 0; i < rows; ++i)
-  {
-    const uchar *row_ptr = img_lab.ptr<uchar>(i);
-    cv::Vec3b *out_ptr = parsing_img.ptr<cv::Vec3b>(i);
-    for (int j = 0; j < cols; ++j)
-    {
-      out_ptr[j] = lut[row_ptr[j]];
-    }
-  }
-}
-
-cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
-                            std::vector<Detection> &dect_src,
-                            cv::Mat &img_seg_show)
-{
-
-  // 1. 生成颜色图 (在较小的尺寸上操作)
-  cv::Mat parsing_img(img_lab.size(), CV_8UC3);
-  convertIdToRGBOptimized(img_lab, parsing_img);
-
-  // 2. 将颜色图缩放到原图大小
-  // 如果 img_lab 和 img_src 尺寸一致，此步会自动跳过或非常快
-  if (parsing_img.size() != img_src.size())
-  {
-    cv::resize(parsing_img, parsing_img, img_src.size(), 0, 0,
-               cv::INTER_NEAREST);
-  }
-
-  // 3. 图像融合 (Alpha Blending)
-  // 建议先融合，这样绘制的框和文字才不会被半透明遮盖
-  float alpha_f = 0.6f;
-  cv::addWeighted(img_src, alpha_f, parsing_img, 1.0f - alpha_f, 0.0,
-                  img_seg_show);
-
-  // 4. 在融合后的图上绘制检测框
-  for (const auto &det : dect_src)
-  {
-    cv::Rect rect_tmp(det.bbox.xmin, det.bbox.ymin,
-                      (det.bbox.xmax - det.bbox.xmin),
-                      (det.bbox.ymax - det.bbox.ymin));
-
-    // 绘制矩形
-    cv::rectangle(img_seg_show, rect_tmp, cv::Scalar(0, 0, 255), 2);
-
-    // 通过 id+100 映射类别名称
-    static const std::map<int, std::string> mul_map_class = {
-        {0, "unla"},    {1, "back"},      {2, "gras"},      {3, "road"},
-        {4, "dyna"},    {5, "stat"},      {6, "wall"},      {7, "vehi"},
-        {8, "pole"},    {9, "impa"},      {10, "depr"},     {11, "bush"},
-        {12, "limb"},   {13, "CES_arod"}, {14, "CES_stck"}, {15, "CES_pits"},
-        {100, "pole"},  {101, "obst"},    {102, "fixo"},    {103, "car"},
-        {104, "stat"},  {105, "dyna"},    {106, "chst"},    {107, "pers"}};
-    int mapped_id = det.id + 100;
-    auto it = mul_map_class.find(mapped_id);
-    std::string obj_name = (it != mul_map_class.end()) ? it->second
-                           : "id_" + std::to_string(det.id);
-    std::string label = obj_name + ":" + cv::format("%.2f", det.score);
-
-    cv::putText(img_seg_show, label,
-                cv::Point(det.bbox.xmin,
-                          std::max(static_cast<int>(det.bbox.ymin + 15), 15)),
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1,
-                cv::LINE_AA);
-  }
-
-  return parsing_img;
-}
 
 // 统计单通道 dst_label 中不同 ID 的数量
 // void countLabelStatistics(const cv::Mat &dst_label, const std::string &image_name)
@@ -225,7 +152,7 @@ public:
   // 配置参数
   struct Config
   {
-    int infer_mode = 5;               // 推理模式 0-6
+    int infer_mode = 7;               // 推理模式 0-6
     // int erode_pixel = 205;            // 腐蚀像素
     int erode_pixel = 205;            // 腐蚀像素
     float area_threshold = 0.5;       // 区域阈值
@@ -254,6 +181,7 @@ public:
     // string sub_model = "../models/sub_20260105_640x384.bin";
     // string sub_model = "../models/sub_20260225_640x384.bin";
     string sub_model = "../models/sub_20260303_640x384.bin";
+    string dsg_multi_model = "../models/dsg_multi_20260401_640x384.bin";
   };
 
   struct ProcessResult
@@ -261,6 +189,7 @@ public:
     pcl::PointCloud<pcl::PointXYZRGBL> point_cloud;
     Mat depth_map;
     Mat label_map;
+    cv::Mat visualization;
     double process_time_ms;
     int frame_id;
     string mode_name;
@@ -315,6 +244,11 @@ public:
     {
       mulSubPerception.perception_init(config_.sub_model.c_str());
       cout << "[✓] Sub-task model initialized: " << config_.sub_model << endl;
+    }
+    else if (config_.infer_mode == 7)
+    {
+      dsgPerception_.perception_init(config_.dsg_multi_model.c_str());
+      cout << "[✓] DSG Night model initialized: " << config_.dsg_multi_model << endl;
     }
 
     cout << "===================================================\n"
@@ -386,6 +320,9 @@ public:
     case 6:
       result = processMode6(left_img, right_img, grayImageLeft, grayImageRight);
       break;
+    case 7:
+      result = processMode7(left_img, right_img, grayImageLeft, grayImageRight);
+      break;
     default:
       cerr << "[Error] Invalid mode: " << config_.infer_mode << endl;
       break;
@@ -413,8 +350,95 @@ private:
   multi_perception multiPerception_;
   qr_cs_perception qrCsPerception_;
   multi_perception mulSubPerception;
+  dsg_perception dsgPerception_;
   int current_frame_id_ = 0;       // 当前处理的帧ID
   string current_image_name_ = ""; // 当前处理的图像文件名（不含扩展名）
+
+  /**
+   * @brief 处理标签轮廓 (DSG 逻辑)
+   */
+  void processLabelContours(cv::Mat& label_img, bool& all_neighbors_are_lawn)
+  {
+    if (label_img.empty())
+      return;
+
+    if (cv::countNonZero(label_img == 2) == 0)
+      return;
+
+    cv::Mat result = label_img.clone();
+    cv::Mat mask_non_target = (label_img != 0) & (label_img != 1) & (label_img != 2);
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask_non_target, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    int dx[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
+    int dy[8] = {-1, 0, 1, -1, 1, -1, 0, 1};
+
+    for (const auto& contour : contours)
+    {
+      cv::Mat region_mask = cv::Mat::zeros(label_img.size(), CV_8UC1);
+      cv::fillPoly(region_mask, {contour}, cv::Scalar(255));
+
+      int lawn_neighbor_count = 0;
+      int label1_neighbor_count = 0;
+      int other_neighbor_count = 0;
+      int total_neighbor_count = 0;
+      bool region_touches_boundary = false;
+
+      for (const auto& point : contour)
+      {
+        int x = point.x;
+        int y = point.y;
+
+        if (x == 0 || x == label_img.cols - 1 || y == 0 || y == label_img.rows - 1)
+          region_touches_boundary = true;
+
+        if (x < 1 || x >= label_img.cols - 1 || y < 1 || y >= label_img.rows - 1)
+          continue;
+
+        for (int i = 0; i < 8; i++)
+        {
+          int nx = x + dx[i];
+          int ny = y + dy[i];
+
+          if (nx >= 0 && nx < label_img.cols && ny >= 0 && ny < label_img.rows)
+          {
+            if (region_mask.at<uchar>(ny, nx) == 0)
+            {
+              total_neighbor_count++;
+              uchar neighbor_label = label_img.at<uchar>(ny, nx);
+              if (neighbor_label == 2)
+                lawn_neighbor_count++;
+              else if (neighbor_label == 1)
+                label1_neighbor_count++;
+              else
+                other_neighbor_count++;
+            }
+          }
+        }
+      }
+
+      float lawn_ratio = (total_neighbor_count > 0) ? (float)lawn_neighbor_count / total_neighbor_count : 0.0f;
+      bool should_mark_as_13 = (label1_neighbor_count == 0) && (lawn_ratio >= 0.8f || region_touches_boundary);
+
+      if (should_mark_as_13)
+      {
+        for (int y = 0; y < label_img.rows; y++)
+        {
+          for (int x = 0; x < label_img.cols; x++)
+          {
+            if (region_mask.at<uchar>(y, x) == 255)
+            {
+              if (label_img.at<uchar>(y, x) != 0 && label_img.at<uchar>(y, x) != 1 && label_img.at<uchar>(y, x) != 2)
+                result.at<uchar>(y, x) = 13;
+            }
+          }
+        }
+        all_neighbors_are_lawn = true;
+      }
+    }
+    label_img = result;
+  }
 
   /**
    * @brief 计算直线边缘评分
@@ -1252,6 +1276,149 @@ private:
     return result;
   }
 
+  // Mode 7: DSG Night recognition - DSG 夜间识别
+  ProcessResult processMode7(const Mat &left, const Mat &right, Mat grayImageL, Mat grayImageR)
+  {
+    (void)right;
+    ProcessResult result;
+    result.mode_name = "DSG_Night";
+
+    cout << "[Mode 7] DSG Night recognition" << endl;
+
+    cv::Rect cropRegion(0, 0, left.cols, 432);
+    cv::Mat croppedImg = left(cropRegion);
+
+    // DSG logic: Align with reference run_cdt_dsg_fusion_dir.cpp
+
+    std::vector<Detection> dect_src, dect_dst, cdt_src;
+    cv::Mat img_label = cv::Mat::zeros(384, 640, CV_8UC1) + 1;
+    cv::Mat lab_out, lab_dst;
+
+    // 1. Resize to 640x384 for segmentation inference
+    cv::Mat resizedForSeg;
+    cv::resize(croppedImg, resizedForSeg, cv::Size(640, 384));
+
+    // Set inference internal dimensions
+    dsgPerception_.ori_height = resizedForSeg.rows;
+    dsgPerception_.ori_width  = resizedForSeg.cols;
+
+    // 2. Inference Multi-task (Detection + Segmentation)
+    dsgPerception_.perception_process_bgr_no_argmax_erode(
+        resizedForSeg, dect_src, img_label, lab_out, config_.erode_pixel);
+
+    // 2. Resize segmentation result from 640x384 back to 640x432
+    cv::resize(lab_out, lab_out, cv::Size(640, 432), 0, 0, cv::INTER_NEAREST);
+
+    // 3. Map detection IDs and prepare lab_dst (logic from reference line 1130-1137)
+    lab_out.copyTo(lab_dst);
+    dect_dst.clear();
+    for (const auto& det : dect_src) {
+        Detection fixed_det = det;
+        fixed_det.id += 100; // Map to 100+ format
+        dect_dst.push_back(fixed_det);
+    }
+
+    // CES 逻辑已关闭
+    // bool all_neighbors_are_lawn = false;
+    // this->processLabelContours(lab_dst, all_neighbors_are_lawn);
+
+    // 检测RGB偏黑区域并标记为可行走区域（类别3：road）
+    cv::Mat hsvImg;
+    cv::cvtColor(croppedImg, hsvImg, cv::COLOR_BGR2HSV);
+
+    // 定义偏黑区域的HSV范围（低亮度、低饱和度）
+    cv::Scalar lowerBlack(0, 0, 0);      // H, S, V
+    cv::Scalar upperBlack(180, 50, 80);  // 低饱和度、低亮度
+
+    cv::Mat darkMask;
+    cv::inRange(hsvImg, lowerBlack, upperBlack, darkMask);
+
+    // 形态学操作去除噪点
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+    cv::morphologyEx(darkMask, darkMask, cv::MORPH_CLOSE, kernel);
+    cv::morphologyEx(darkMask, darkMask, cv::MORPH_OPEN, kernel);
+
+    // 将检测到的偏黑区域在lab_dst中标记为可行走（类别3）
+    cv::Mat resizedMask;
+    cv::resize(darkMask, resizedMask, lab_dst.size(), 0, 0, cv::INTER_NEAREST);
+    lab_dst.setTo(3, resizedMask);
+
+    // Handle CDT if enabled
+    if (config_.enabel_cdt)
+    {
+      cdtPerception_.perception_process_bgr(croppedImg, cdt_src);
+      cv::Rect cdt_rect = get_cdt_rect(cdt_src);
+      if (cdt_rect.area() > 0)
+      {
+        lab_dst(cdt_rect) = -1;
+      }
+    }
+
+    result.label_map = lab_dst.clone();
+
+    if (grayImageR.empty())
+      return result;
+
+    // Depth computation
+    auto depth_start = chrono::high_resolution_clock::now();
+    Mat depth_cal = stereo_multi_match.stereo_multi_process(grayImageL, grayImageR, false);
+
+    // Crop depth to 432 height to match croppedImg/labels
+    cv::Mat depth_432 = depth_cal(cv::Rect(0, 0, 640, 432)).clone();
+
+    auto depth_end = chrono::high_resolution_clock::now();
+    cout << "[Step 2/3] Depth computation done: "
+         << chrono::duration<double, milli>(depth_end - depth_start).count() << " ms" << endl;
+
+    // Fusion
+    auto fusion_start = chrono::high_resolution_clock::now();
+    pcl::PointCloud<pcl::PointXYZRGBL> xyz_rgbi_cloud, out_xyz_rgbi_cloud;
+    stereo_multi_match.stereo_process_pci_depth_rgb_seg_det_fusion(
+        depth_432, lab_dst, dect_dst, croppedImg, xyz_rgbi_cloud, out_xyz_rgbi_cloud);
+    result.point_cloud = out_xyz_rgbi_cloud;
+    auto fusion_end = chrono::high_resolution_clock::now();
+    cout << "[Step 3/3] Fusion done: "
+         << chrono::duration<double, milli>(fusion_end - fusion_start).count() << " ms" << endl;
+
+    // string labelPcdPath = savePcdDirPath + name + "_rgbl";
+    // savePcdfile_with_rgb_label(out_xyz_rgbi_cloud, labelPcdPath);
+
+    if (config_.m_enable_debug_show)
+    {
+      Mat img_seg_show, xyz_rgbl_show, origin_seg, pure_seg;
+      // For visualization, we use 640x384 resize as in reference
+      cv::Mat croppedImgVis;
+      cv::resize(croppedImg, croppedImgVis, cv::Size(640, 384));
+      cv::Mat labVis;
+      cv::resize(lab_dst, labVis, cv::Size(640, 384), 0, 0, cv::INTER_NEAREST);
+
+      // Correct detection boxes for visualization scale (432 -> 384)
+      std::vector<Detection> dect_vis = dect_dst;
+      for (auto &det : dect_vis)
+      {
+        det.bbox.ymin *= (384.0f / 432.0f);
+        det.bbox.ymax *= (384.0f / 432.0f);
+      }
+
+      bool enable_draw_box = false; // 控制是否显示检测框，默认不显示
+      pure_seg = drawResultOptimized(croppedImgVis, labVis, dect_vis, img_seg_show, enable_draw_box);
+      cv::hconcat(croppedImgVis, pure_seg, origin_seg);
+      cv::hconcat(origin_seg, img_seg_show, origin_seg);
+
+      stereo_point_cloud spc;
+      spc.show_xyz_rgbl_plane_point_cloud_final(out_xyz_rgbi_cloud, xyz_rgbl_show);
+      cv::vconcat(origin_seg, xyz_rgbl_show, result.visualization);
+
+      string finalPicPath = config_.finalPicDir + current_image_name_ + "_dsg_night.jpg";
+      imwrite(finalPicPath, result.visualization);
+
+      string finalPcdPath = config_.finalPcdDir + current_image_name_ + "_dsg_night";
+      savePcdfile_with_rgb_label(out_xyz_rgbi_cloud, finalPcdPath);
+    }
+
+    return result;
+  }
+
   // Mode 6: Sub-task recognition - 子任务识别
   ProcessResult processMode6(const Mat &left, const Mat &right, Mat grayImageL,
                              Mat grayImageR)
@@ -1431,27 +1598,16 @@ int main(int argc, char **argv)
 
   // 读取配置
   OfflinePerceptionProcessor::Config config;
-  // TODO: 从config.yaml读取配置（目前固定为 mode 6：Sub-task）
-  config.infer_mode = 6;
-  bool ret_pcd_dir = false;
+  // TODO: 从config.yaml读取配置
+  config.infer_mode = 7;
+  config.m_enable_debug_show = true;  // 启用调试输出（包括点云保存）
+  // config.dsg_multi_model = "../models/dsg_multi_20260401_640x384.bin";
+  bool ret_pcd_dir = true;
 
   // 默认路径
-  // string input_dir = "/home/youfeng/debug/03/03/userdata/rosbag_record/rosbag_LK-MR6P1US000107_camera_202603031104/stereo_output_rosbag_LK-MR6P1US000107_camera_202603031104_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/03/userdata/rosbag_record/rosbag_LK-MR6P1US000107_camera_202603031122/stereo_output_rosbag_LK-MR6P1US000107_camera_202603031122_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/03/userdata/rosbag_record/rosbag_LK-MR6P1US000107_camera_202603030959/stereo_output_rosbag_LK-MR6P1US000107_camera_202603030959_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/03/avoiding_people/rosbag_LK-MR6P1US000107_camera_202603031816/stereo_output_rosbag_LK-MR6P1US000107_camera_202603031816_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/debug/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/04/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603041117/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603041117_0/images/extracted_interval/bottle/";
-  // string input_dir = "/home/youfeng/debug/03/05/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603051439/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603051439_0_filtered_20260305_1439_to_20260305_1441/images/error/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061618/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061618_0_filtered_20260306_1619_to_20260306_1621/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061439/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061439_0_filtered_20260306_1441_to_20260306_1443/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061551/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061551_0_filtered_20260306_1552_to_20260306_1554/images/extracted_interval/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/no_point/";
-  // string input_dir = "/home/youfeng/debug/03/06/bug/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061404/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061404_0_filtered_20260306_1405_to_20260306_1408/images/no_point/";
   // string input_dir = "/home/youfeng/debug/03/02/rosbag_LK-MR6P1US000107_camera_202603021453/stereo_output_rosbag_LK-MR6P1US000107_camera_202603021453_0/images/extracted_interval/brick/";
-  string input_dir = "/home/youfeng/debug/03/06/userdata/rosbag_record/rosbag_LK-MR6P1US000107_navigation_202603061129/stereo_output_rosbag_LK-MR6P1US000107_navigation_202603061129_0/images/debug/error/";
+  // string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/";
+  string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/debug/";
   cout << "\nInput directory: " << input_dir << endl;
 
   // 构造最终结果输出目录
@@ -1482,11 +1638,18 @@ int main(int argc, char **argv)
   {
     config.finalPicDir = input_dir + "/cdt_sub_" + mode_suffix + config_suffix + "_0310_det_0.3_pc_432/";
   }
+  else
+  {
+    config.finalPicDir = input_dir + "/dsg_multi_debug_" + mode_suffix + "_432/";
+  }
   config.finalPcdDir =
-      input_dir + "/pcd_" + mode_suffix + config_suffix + "_0310_432/"; // 设置最终PCD输出目录
+      input_dir + "/dsg_pcd_debug_" + mode_suffix + "_" + std::to_string(config.erode_pixel) + "_432/"; // 设置最终PCD输出目录
 
-  fs::create_directories(config.finalPicDir);
-  if (ret_pcd_dir)
+  if (!config.finalPicDir.empty())
+  {
+    fs::create_directories(config.finalPicDir);
+  }
+  if (ret_pcd_dir && !config.finalPcdDir.empty())
   {
     fs::create_directories(config.finalPcdDir);
   }

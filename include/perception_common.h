@@ -18,8 +18,14 @@
 #include <utility>
 #include <vector>
 
-const uint8_t yj_seg_bgr_putpalette[19] = {
-        119, 119, 119,     200, 0, 0,      102, 255,  102,      0,  89, 118,     0, 255, 255,     0,0,255};
+static uint8_t yj_seg_bgr_putpalette[] = {
+        119, 119, 119,     200, 0, 0,      102, 255,  102,        0,  89, 118,       0,  89, 118,
+        0, 0, 255,         0,0,255,     0,0,255,       0, 0, 0,         0,0,255
+};
+
+const uint8_t yj_detect_putpalette[30] = {
+    255, 0, 0,     80, 134, 240,   0, 0, 255,      66, 66, 66,  66,  66, 66,
+    66, 66, 66,    66, 66, 66,      66, 66, 66,      66, 66, 66,  66, 66, 66 };
 
 #define YJ_MODEL_OUTPUT_WIDTH 640          //模型输出的宽
 #define YJ_MODEL_OUTPUE_HEIGHT 480         //模型输出的高
@@ -98,7 +104,6 @@ typedef struct Detection {
   ~Detection() {}
 } Detection;
 
-static bool greater(Detection det1, Detection det2) __attribute__((unused));
 static bool greater(Detection det1, Detection det2) {
   return (det1.score >= det2.score);
 }
@@ -182,7 +187,7 @@ struct Perception {
     os << "[";
     if (perception.type == Perception::DET) {
       auto &detection = perception.det;
-      for (size_t i = 0; i < detection.size(); i++) {
+      for (int i = 0; i < detection.size(); i++) {
         if (i != 0) {
           os << ",";
         }
@@ -191,7 +196,7 @@ struct Perception {
 
     } else if (perception.type == Perception::CLS) {
       auto &cls = perception.cls;
-      for (size_t i = 0; i < cls.size(); i++) {
+      for (int i = 0; i < cls.size(); i++) {
         if (i != 0) {
           os << ",";
         }
@@ -199,7 +204,7 @@ struct Perception {
       }
     } else if (perception.type == Perception::SEG) {
       auto &seg = perception.seg;
-      for (size_t i = 0; i < seg.seg.size(); i++) {
+      for (int i = 0; i < seg.seg.size(); i++) {
         if (i != 0) {
           os << ",";
         }
@@ -207,7 +212,7 @@ struct Perception {
       }
     } else if (perception.type == Perception::MASK) {
       auto &detection = perception.mask.det_info;
-      for (size_t i = 0; i < detection.size(); i++) {
+      for (int i = 0; i < detection.size(); i++) {
         if (i != 0) {
           os << ",";
         }

@@ -46,7 +46,7 @@ processing:
 # Image Dimensions
 image:
   width: 640
-  height: 384
+  height: 432
   
 # Performance Options
 performance:

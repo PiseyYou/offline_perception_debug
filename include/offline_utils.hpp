@@ -44,7 +44,7 @@ cv::Mat drawResult(cv::Mat &img_src, cv::Mat &img_lab,
 void convertIdToRGBOptimized(const cv::Mat &img_lab, cv::Mat &parsing_img);
 cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
                             std::vector<Detection> &dect_src,
-                            cv::Mat &img_seg_show);
+                            cv::Mat &img_seg_show, bool enable_draw_box = false);
 
 // 保存带 RGB+label 的 PCD
 int savePcdfile_with_rgb_label(

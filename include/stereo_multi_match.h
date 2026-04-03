@@ -14,7 +14,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/impl/point_types.hpp>
 #include <pcl/visualization/pcl_visualizer.h>
-#include <perception_common.h>
+#include "perception.h"
 
 #include <pcl/filters/passthrough.h>
 #include <pcl/search/kdtree.h>

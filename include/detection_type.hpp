@@ -2,7 +2,7 @@
 #define DETECTION_TYPE_HPP
 
 #include <opencv2/core/core.hpp>
-#include "perception_common.h"
+#include "perception.h"
 
 namespace cv {
     template<>
