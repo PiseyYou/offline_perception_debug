@@ -5,7 +5,7 @@
 ## 项目信息
 
 - **项目路径**: `/home/youfeng/CLionProjects/05-offline_debug_fusion/offline_perception_debug/`
-- **版本**: K1.2.1
+- **版本**: K1.2.2
 - **创建时间**: 2026-01-08
 - **最后更新**: 2026-04-03
 
@@ -17,7 +17,9 @@
 ✅ **详细日志** - 输出每个处理步骤的耗时  
 ✅ **多格式输出** - PCD点云、深度图、标签图、可视化图像  
 ✅ **DSG感知** - 支持 dsg_perception 多目标检测模块（K1.2.1新增）  
-✅ **Merged工具** - offline_perception_debug_merged 融合432/384px双高度逻辑（K1.2.1新增）
+✅ **Merged工具** - offline_perception_debug_merged 融合432/384px双高度逻辑（K1.2.1新增）  
+✅ **可视化修复** - 统一使用 640x432 分辨率显示，消除坐标缩放误差（K1.2.2）  
+✅ **HSV滤波开关** - 偏黑区域道路检测可通过 `enable_hsv_dark_filter` 变量控制（K1.2.2）
 
 ## 目录结构
 
@@ -38,7 +40,7 @@ offline_perception_debug/
 ├── include/
 │   └── unified_perception_processor.h       # 统一感知处理器头文件（K1.2.1新增）
 ├── models/
-│   └── dsg_multi_20260401_640x384.bin       # DSG模型文件（K1.2.1新增）
+│   └── dsg_multi_20260403_640x384.bin       # DSG模型文件（K1.2.2更新）
 ├── data/
 │   ├── input/              # 输入立体图像
 │   └── output/             # 输出结果
@@ -290,6 +292,7 @@ float cy = rgb.rows / 2.0f;
 
 | 版本 | 日期 | 主要变更 |
 |------|------|---------|
+| K1.2.2 | 2026-04-03 | 更新模型至 dsg_multi_20260403、修复可视化分辨率(432px)、HSV滤波改为可选开关 |
 | K1.2.1 | 2026-04-03 | 新增 dsg_perception 模块、offline_perception_debug_merged、config 高度改为432px |
 | K1.1.5b | 2026-03-27 | 集成 dsg_perception 头文件 |
 | K1.1.5 | 2026-03-24 | 初始版本上传 |

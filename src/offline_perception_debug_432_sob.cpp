@@ -181,7 +181,7 @@ public:
     // string sub_model = "../models/sub_20260105_640x384.bin";
     // string sub_model = "../models/sub_20260225_640x384.bin";
     string sub_model = "../models/sub_20260303_640x384.bin";
-    string dsg_multi_model = "../models/dsg_multi_20260401_640x384.bin";
+    string dsg_multi_model = "../models/dsg_multi_20260403_640x384.bin";
   };
 
   struct ProcessResult
@@ -1322,26 +1322,27 @@ private:
     // bool all_neighbors_are_lawn = false;
     // this->processLabelContours(lab_dst, all_neighbors_are_lawn);
 
-    // 检测RGB偏黑区域并标记为可行走区域（类别3：road）
-    cv::Mat hsvImg;
-    cv::cvtColor(croppedImg, hsvImg, cv::COLOR_BGR2HSV);
+    // 偏黑区域标记为可行走区域（类别3：road），通过 bool 变量控制是否启用
+    bool enable_hsv_dark_filter = false;
+    if (enable_hsv_dark_filter)
+    {
+        cv::Mat hsvImg;
+        cv::cvtColor(croppedImg, hsvImg, cv::COLOR_BGR2HSV);
 
-    // 定义偏黑区域的HSV范围（低亮度、低饱和度）
-    cv::Scalar lowerBlack(0, 0, 0);      // H, S, V
-    cv::Scalar upperBlack(180, 50, 80);  // 低饱和度、低亮度
+        cv::Scalar lowerBlack(0, 0, 0);      // H, S, V
+        cv::Scalar upperBlack(180, 50, 80);  // 低饱和度、低亮度
 
-    cv::Mat darkMask;
-    cv::inRange(hsvImg, lowerBlack, upperBlack, darkMask);
+        cv::Mat darkMask;
+        cv::inRange(hsvImg, lowerBlack, upperBlack, darkMask);
 
-    // 形态学操作去除噪点
-    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
-    cv::morphologyEx(darkMask, darkMask, cv::MORPH_CLOSE, kernel);
-    cv::morphologyEx(darkMask, darkMask, cv::MORPH_OPEN, kernel);
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+        cv::morphologyEx(darkMask, darkMask, cv::MORPH_CLOSE, kernel);
+        cv::morphologyEx(darkMask, darkMask, cv::MORPH_OPEN, kernel);
 
-    // 将检测到的偏黑区域在lab_dst中标记为可行走（类别3）
-    cv::Mat resizedMask;
-    cv::resize(darkMask, resizedMask, lab_dst.size(), 0, 0, cv::INTER_NEAREST);
-    lab_dst.setTo(3, resizedMask);
+        cv::Mat resizedMask;
+        cv::resize(darkMask, resizedMask, lab_dst.size(), 0, 0, cv::INTER_NEAREST);
+        lab_dst.setTo(3, resizedMask);
+    }
 
     // Handle CDT if enabled
     if (config_.enabel_cdt)
@@ -1386,31 +1387,30 @@ private:
     if (config_.m_enable_debug_show)
     {
       Mat img_seg_show, xyz_rgbl_show, origin_seg, pure_seg;
-      // For visualization, we use 640x384 resize as in reference
-      cv::Mat croppedImgVis;
-      cv::resize(croppedImg, croppedImgVis, cv::Size(640, 384));
-      cv::Mat labVis;
-      cv::resize(lab_dst, labVis, cv::Size(640, 384), 0, 0, cv::INTER_NEAREST);
 
-      // Correct detection boxes for visualization scale (432 -> 384)
-      std::vector<Detection> dect_vis = dect_dst;
-      for (auto &det : dect_vis)
-      {
-        det.bbox.ymin *= (384.0f / 432.0f);
-        det.bbox.ymax *= (384.0f / 432.0f);
-      }
+      // 可视化统一使用 640x432（与 croppedImg 原始尺寸一致）
+      cv::Mat croppedImgVis;
+      cv::resize(croppedImg, croppedImgVis, cv::Size(640, 432));
+      cv::Mat labVis;
+      cv::resize(lab_dst, labVis, cv::Size(640, 432), 0, 0, cv::INTER_NEAREST);
 
       bool enable_draw_box = false; // 控制是否显示检测框，默认不显示
-      pure_seg = drawResultOptimized(croppedImgVis, labVis, dect_vis, img_seg_show, enable_draw_box);
+      pure_seg = drawResultOptimized(croppedImgVis, labVis, dect_dst, img_seg_show, enable_draw_box);
+
+      // 上方：原图 | 纯色分割 | 叠加图 → 1920x432
       cv::hconcat(croppedImgVis, pure_seg, origin_seg);
       cv::hconcat(origin_seg, img_seg_show, origin_seg);
 
+      // 下方：三视图（label行 480 + RGB行 480 → 1920x960）
       stereo_point_cloud spc;
       spc.show_xyz_rgbl_plane_point_cloud_final(out_xyz_rgbi_cloud, xyz_rgbl_show);
-      cv::vconcat(origin_seg, xyz_rgbl_show, result.visualization);
+
+      // 最终拼接：432 + 480 + 480 = 1392 高度
+      cv::Mat final_compared;
+      cv::vconcat(origin_seg, xyz_rgbl_show, final_compared);
 
       string finalPicPath = config_.finalPicDir + current_image_name_ + "_dsg_night.jpg";
-      imwrite(finalPicPath, result.visualization);
+      imwrite(finalPicPath, final_compared);
 
       string finalPcdPath = config_.finalPcdDir + current_image_name_ + "_dsg_night";
       savePcdfile_with_rgb_label(out_xyz_rgbi_cloud, finalPcdPath);
