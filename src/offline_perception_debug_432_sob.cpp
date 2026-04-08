@@ -201,9 +201,17 @@ public:
   {
     cout << "\n========== Initializing Perception Modules ==========" << endl;
 
-    // 初始化立体匹配
-    stereo_multi_match.stereo_multi_param_init();
-    cout << "[✓] Stereo matcher initialized" << endl;
+    // 初始化立体匹配 (只有 mode 7 使用自适应参数，其他模式使用原始参数)
+    if (config_.infer_mode == 7)
+    {
+      stereo_multi_match.stereo_multi_param_init_6m_adaptive();
+      cout << "[✓] Stereo matcher initialized (adaptive parameters for night mode)" << endl;
+    }
+    else
+    {
+      stereo_multi_match.stereo_multi_param_init();
+      cout << "[✓] Stereo matcher initialized (original parameters)" << endl;
+    }
 
     cdtPerception_.perception_init(config_.cdt_model.c_str());
     cout << "[✓] Cdt-task model initialized: " << config_.cdt_model << endl;
@@ -1608,7 +1616,8 @@ int main(int argc, char **argv)
   // string input_dir = "/home/youfeng/debug/03/02/rosbag_LK-MR6P1US000107_camera_202603021453/stereo_output_rosbag_LK-MR6P1US000107_camera_202603021453_0/images/extracted_interval/brick/";
   // string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/";
   // string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/debug/";
-  string input_dir = "/home/youfeng/debug/boluo/0286/20260408/";
+  // string input_dir = "/home/youfeng/debug/boluo/0286/20260408/";
+  string input_dir = "/home/youfeng/debug/boluo/0123/20260408/debug/";
   cout << "\nInput directory: " << input_dir << endl;
 
   // 构造最终结果输出目录

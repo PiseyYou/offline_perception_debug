@@ -44,6 +44,10 @@ public:
 
     cv::Mat stereo_multi_process(cv::Mat& rectifyL, cv::Mat& rectifyR, bool enable_height_filter_);
 
+    // New initialization for 6m distance limitation with adaptive quality
+    void stereo_multi_param_init_6m_adaptive();
+    Mat stereo_multi_process_depth_6m_adaptive(Mat &rectifyL, Mat &rectifyR);
+
     void stereo_point_ori_rgb_filter(pcl::PointCloud<pcl::PointXYZRGBL> &xyz_rgbl_cloud, pcl::PointCloud<pcl::PointXYZRGBL> &out_xyz_rgbl_cloud);
 
     void stereo_process_pc_rgbl_depth(const Mat &depth, Mat &ori_mat, pcl::PointCloud<pcl::PointXYZRGBL> &xyz_rgbl_cloud, pcl::PointCloud<pcl::PointXYZRGBL> &out_xyz_rgbl_cloud);
@@ -95,6 +99,14 @@ private:
     void stereo_base_param_init();
     bool setStereoMatcherParameters(string dirPath);
     cv::Mat backgroundSubstract(const cv::Mat& src);
+
+    // Image quality assessment
+    bool assess_image_quality(const cv::Mat& image, double& brightness, double& contrast);
+
+    // New initialization functions for 6m limitation with adaptive parameters
+    void stereo_block_matcher_init_6m_adaptive(bool is_low_quality);
+    void half_top_stereo_block_matcher_init_6m_adaptive(bool is_low_quality);
+    void half_bottom_stereo_block_matcher_init_6m_adaptive(bool is_low_quality);
 
 
     // Variable

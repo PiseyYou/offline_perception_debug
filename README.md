@@ -5,7 +5,7 @@
 ## 项目信息
 
 - **项目路径**: `/home/youfeng/CLionProjects/05-offline_debug_fusion/offline_perception_debug/`
-- **版本**: K1.2.2
+- **版本**: K1.2.2b
 - **创建时间**: 2026-01-08
 - **最后更新**: 2026-04-08
 
@@ -292,6 +292,7 @@ float cy = rgb.rows / 2.0f;
 
 | 版本 | 日期 | 主要变更 |
 |------|------|---------|
+| K1.2.2b | 2026-04-08 | 新增6m自适应实现文档、优化立体匹配算法 |
 | K1.2.2 | 2026-04-03 | 更新模型至 dsg_multi_20260403、修复可视化分辨率(432px)、HSV滤波改为可选开关 |
 | K1.2.1 | 2026-04-03 | 新增 dsg_perception 模块、offline_perception_debug_merged、config 高度改为432px |
 | K1.1.5b | 2026-03-27 | 集成 dsg_perception 头文件 |

@@ -102,6 +102,160 @@ void StereoMultiMatch::stereo_multi_param_init()
     half_param_ = MultiScaleFilterParams(2.5, 8, 7, 3, 25);
 }
 
+// Image quality assessment for adaptive parameter selection
+bool StereoMultiMatch::assess_image_quality(const cv::Mat& image, double& brightness, double& contrast)
+{
+    cv::Mat gray;
+    if (image.channels() == 3) {
+        cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    } else {
+        gray = image;
+    }
+
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(gray, mean, stddev);
+
+    brightness = mean[0];
+    contrast = stddev[0];
+
+    // Low quality: brightness < 50 or contrast < 20
+    return (brightness >= 50.0 && contrast >= 20.0);
+}
+
+// StereoBM initialization with adaptive parameters (no hard distance cutoff)
+void StereoMultiMatch::stereo_block_matcher_init_6m_adaptive(bool is_low_quality)
+{
+    stereo_block_matcher_ = cv::StereoBM::create();
+    stereo_block_matcher_->setMinDisparity(0);  // Keep full range, filter by depth later
+    stereo_block_matcher_->setNumDisparities(48);
+    stereo_block_matcher_->setBlockSize(is_low_quality ? 17 : 13);
+    stereo_block_matcher_->setSpeckleWindowSize(64);
+    stereo_block_matcher_->setSpeckleRange(16);
+    stereo_block_matcher_->setDisp12MaxDiff(0);
+    stereo_block_matcher_->setPreFilterType(1);
+    stereo_block_matcher_->setPreFilterSize(15);
+    stereo_block_matcher_->setPreFilterCap(31);
+    stereo_block_matcher_->setTextureThreshold(5);
+    stereo_block_matcher_->setUniquenessRatio(is_low_quality ? 10 : 4);
+}
+
+// Half-resolution top StereoBM initialization with adaptive parameters
+void StereoMultiMatch::half_top_stereo_block_matcher_init_6m_adaptive(bool is_low_quality)
+{
+    half_top_stereo_block_matcher_ = cv::StereoBM::create();
+    half_top_stereo_block_matcher_->setMinDisparity(0);  // Keep full range
+    half_top_stereo_block_matcher_->setNumDisparities(32);
+    half_top_stereo_block_matcher_->setBlockSize(is_low_quality ? 17 : 13);
+    half_top_stereo_block_matcher_->setSpeckleWindowSize(80);
+    half_top_stereo_block_matcher_->setSpeckleRange(2);
+    half_top_stereo_block_matcher_->setDisp12MaxDiff(0);
+    half_top_stereo_block_matcher_->setPreFilterType(1);
+    half_top_stereo_block_matcher_->setPreFilterSize(15);
+    half_top_stereo_block_matcher_->setPreFilterCap(31);
+    half_top_stereo_block_matcher_->setTextureThreshold(10);
+    half_top_stereo_block_matcher_->setUniquenessRatio(10);
+}
+
+// Half-resolution bottom StereoSGBM initialization with adaptive parameters
+void StereoMultiMatch::half_bottom_stereo_block_matcher_init_6m_adaptive(bool is_low_quality)
+{
+    half_bottom_stereo_block_matcher_ = cv::StereoSGBM::create();
+    half_bottom_stereo_block_matcher_->setMinDisparity(0);  // Keep full range
+    half_bottom_stereo_block_matcher_->setNumDisparities(24);
+    half_bottom_stereo_block_matcher_->setBlockSize(is_low_quality ? 9 : 5);
+    half_bottom_stereo_block_matcher_->setSpeckleWindowSize(64);
+    half_bottom_stereo_block_matcher_->setSpeckleRange(16);
+    half_bottom_stereo_block_matcher_->setDisp12MaxDiff(0);
+    half_bottom_stereo_block_matcher_->setPreFilterCap(63);
+    half_bottom_stereo_block_matcher_->setUniquenessRatio(is_low_quality ? 30 : 20);
+    half_bottom_stereo_block_matcher_->setP1(100);
+    half_bottom_stereo_block_matcher_->setP2(500);
+    half_bottom_stereo_block_matcher_->setMode(0);
+}
+
+// Parameter initialization with 6m limitation and adaptive quality assessment
+void StereoMultiMatch::stereo_multi_param_init_6m_adaptive()
+{
+    stereo_dis_init();
+    stereo_base_param_init();
+
+    // Initialize with normal quality parameters (will be adjusted dynamically)
+    stereo_block_matcher_init_6m_adaptive(false);
+
+    if (use_multiscale_filter_)
+    {
+        half_top_stereo_block_matcher_init_6m_adaptive(false);
+        half_bottom_stereo_block_matcher_init_6m_adaptive(false);
+    }
+
+    orig_param_ = MultiScaleFilterParams(1.5, 4, 3, 1, 15);
+    half_param_ = MultiScaleFilterParams(2.5, 8, 7, 3, 25);
+}
+
+// Stereo processing with 6m limitation and adaptive parameters based on image quality
+Mat StereoMultiMatch::stereo_multi_process_depth_6m_adaptive(Mat &rectifyL, Mat &rectifyR)
+{
+    // Assess image quality
+    double brightness, contrast;
+    bool is_good_quality = assess_image_quality(rectifyL, brightness, contrast);
+    bool is_low_quality = !is_good_quality;
+
+    // Re-initialize matchers with adaptive parameters based on quality
+    stereo_block_matcher_init_6m_adaptive(is_low_quality);
+    if (use_multiscale_filter_)
+    {
+        half_top_stereo_block_matcher_init_6m_adaptive(is_low_quality);
+        half_bottom_stereo_block_matcher_init_6m_adaptive(is_low_quality);
+    }
+
+    temp_grayImageL = rectifyL.clone();
+
+    // Image preprocessing
+    if (bilateral_filter_kernel_size_ > 0)
+    {
+        cv::bilateralFilter(rectifyL, l_filtered_, bilateral_filter_kernel_size_,
+                           bilateral_filter_sigma_color_, bilateral_filter_sigma_space_);
+        cv::bilateralFilter(rectifyR, r_filtered_, bilateral_filter_kernel_size_,
+                           bilateral_filter_sigma_color_, bilateral_filter_sigma_space_);
+        rectifyL = l_filtered_;
+        rectifyR = r_filtered_;
+    }
+    else if (use_background_substract_)
+    {
+        rectifyL = backgroundSubstract(rectifyL);
+        rectifyR = backgroundSubstract(rectifyR);
+    }
+
+    // Downsample to half resolution
+    cv::pyrDown(rectifyL, half_grayImageL);
+    cv::pyrDown(rectifyR, half_grayImageR);
+
+    // Initialize buffers based on current frame size
+    if (disparity_16S_.empty() || disparity_16S_.size() != half_grayImageL.size())
+    {
+        disparity_16S_.create(half_grayImageL.size(), CV_16S);
+    }
+
+    // Compute disparity
+    stereo_block_matcher_->compute(half_grayImageL, half_grayImageR, disparity_16S_);
+
+    // Apply median filter if configured
+    if (median_filter_kernel_size_ > 0)
+    {
+        cv::medianBlur(disparity_16S_, disparity_16S_, median_filter_kernel_size_);
+    }
+
+    // Convert disparity to CV_32F
+    if (disparity_.empty() || disparity_.size() != disparity_16S_.size())
+    {
+        disparity_.create(disparity_16S_.size(), CV_32F);
+    }
+    disparity_16S_.convertTo(disparity_, CV_32F);
+    disparity_ = (disparity_ / 16.0f);
+
+    return disparity_;
+}
+
 cv::Mat StereoMultiMatch::backgroundSubstract(const cv::Mat &image)
 {
     cv::Mat gray_image;
