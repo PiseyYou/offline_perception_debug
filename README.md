@@ -19,7 +19,8 @@
 ✅ **DSG感知** - 支持 dsg_perception 多目标检测模块（K1.2.1新增）  
 ✅ **Merged工具** - offline_perception_debug_merged 融合432/384px双高度逻辑（K1.2.1新增）  
 ✅ **可视化修复** - 统一使用 640x432 分辨率显示，消除坐标缩放误差（K1.2.2）  
-✅ **HSV滤波开关** - 偏黑区域道路检测可通过 `enable_hsv_dark_filter` 变量控制（K1.2.2）
+✅ **HSV滤波开关** - 偏黑区域道路检测可通过 `enable_hsv_dark_filter` 变量控制（K1.2.2）  
+✅ **Label过滤配置** - label>=100 障碍物过滤可通过 `enable_label_100_filter` 变量控制（K1.2.2b）
 
 ## 目录结构
 
@@ -292,7 +293,7 @@ float cy = rgb.rows / 2.0f;
 
 | 版本 | 日期 | 主要变更 |
 |------|------|---------|
-| K1.2.2b | 2026-04-08 | 新增6m自适应实现文档、优化立体匹配算法 |
+| K1.2.2b | 2026-04-08 | 新增 label>=100 过滤配置开关 `enable_label_100_filter`（默认false） |
 | K1.2.2 | 2026-04-03 | 更新模型至 dsg_multi_20260403、修复可视化分辨率(432px)、HSV滤波改为可选开关 |
 | K1.2.1 | 2026-04-03 | 新增 dsg_perception 模块、offline_perception_debug_merged、config 高度改为432px |
 | K1.1.5b | 2026-03-27 | 集成 dsg_perception 头文件 |

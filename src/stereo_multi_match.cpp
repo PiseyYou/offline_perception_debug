@@ -129,13 +129,24 @@ void StereoMultiMatch::stereo_block_matcher_init_6m_adaptive(bool is_low_quality
     stereo_block_matcher_->setMinDisparity(0);  // Keep full range, filter by depth later
     stereo_block_matcher_->setNumDisparities(48);
     stereo_block_matcher_->setBlockSize(is_low_quality ? 17 : 13);
-    stereo_block_matcher_->setSpeckleWindowSize(64);
-    stereo_block_matcher_->setSpeckleRange(16);
+
+    // 增强 speckle 过滤以去除草坪噪点（温和水平）
+    if (is_low_quality)
+    {
+        stereo_block_matcher_->setSpeckleWindowSize(100);  // 温和水平
+        stereo_block_matcher_->setSpeckleRange(8);         // 温和水平
+    }
+    else
+    {
+        stereo_block_matcher_->setSpeckleWindowSize(64);
+        stereo_block_matcher_->setSpeckleRange(16);
+    }
+
     stereo_block_matcher_->setDisp12MaxDiff(0);
     stereo_block_matcher_->setPreFilterType(1);
     stereo_block_matcher_->setPreFilterSize(15);
     stereo_block_matcher_->setPreFilterCap(31);
-    stereo_block_matcher_->setTextureThreshold(5);
+    stereo_block_matcher_->setTextureThreshold(is_low_quality ? 10 : 5);  // 低质量图像提高纹理阈值
     stereo_block_matcher_->setUniquenessRatio(is_low_quality ? 10 : 4);
 }
 
@@ -146,8 +157,19 @@ void StereoMultiMatch::half_top_stereo_block_matcher_init_6m_adaptive(bool is_lo
     half_top_stereo_block_matcher_->setMinDisparity(0);  // Keep full range
     half_top_stereo_block_matcher_->setNumDisparities(32);
     half_top_stereo_block_matcher_->setBlockSize(is_low_quality ? 17 : 13);
-    half_top_stereo_block_matcher_->setSpeckleWindowSize(80);
-    half_top_stereo_block_matcher_->setSpeckleRange(2);
+
+    // 温和的 speckle 过滤
+    if (is_low_quality)
+    {
+        half_top_stereo_block_matcher_->setSpeckleWindowSize(100);
+        half_top_stereo_block_matcher_->setSpeckleRange(2);
+    }
+    else
+    {
+        half_top_stereo_block_matcher_->setSpeckleWindowSize(80);
+        half_top_stereo_block_matcher_->setSpeckleRange(2);
+    }
+
     half_top_stereo_block_matcher_->setDisp12MaxDiff(0);
     half_top_stereo_block_matcher_->setPreFilterType(1);
     half_top_stereo_block_matcher_->setPreFilterSize(15);
@@ -163,8 +185,19 @@ void StereoMultiMatch::half_bottom_stereo_block_matcher_init_6m_adaptive(bool is
     half_bottom_stereo_block_matcher_->setMinDisparity(0);  // Keep full range
     half_bottom_stereo_block_matcher_->setNumDisparities(24);
     half_bottom_stereo_block_matcher_->setBlockSize(is_low_quality ? 9 : 5);
-    half_bottom_stereo_block_matcher_->setSpeckleWindowSize(64);
-    half_bottom_stereo_block_matcher_->setSpeckleRange(16);
+
+    // 温和的 speckle 过滤
+    if (is_low_quality)
+    {
+        half_bottom_stereo_block_matcher_->setSpeckleWindowSize(80);
+        half_bottom_stereo_block_matcher_->setSpeckleRange(10);
+    }
+    else
+    {
+        half_bottom_stereo_block_matcher_->setSpeckleWindowSize(64);
+        half_bottom_stereo_block_matcher_->setSpeckleRange(16);
+    }
+
     half_bottom_stereo_block_matcher_->setDisp12MaxDiff(0);
     half_bottom_stereo_block_matcher_->setPreFilterCap(63);
     half_bottom_stereo_block_matcher_->setUniquenessRatio(is_low_quality ? 30 : 20);
@@ -770,6 +803,7 @@ void StereoMultiMatch::stereo_process_pci_depth_rgb_seg_det_fusion(
                     ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
                 pc_rgbl.rgb = *reinterpret_cast<float *>(&rgb_packed);
                 pc_rgbl.label = lab.at<uchar>(y, x);
+
                 // 底部边角草坪过滤：仅当label==2或3且位于底部边角时跳过，
                 // 保留障碍物(其他label)信息，仅减少底部边角草坪点云，
                 // 避免建图时机器人因边角草坪左右摇摆
@@ -781,6 +815,62 @@ void StereoMultiMatch::stereo_process_pci_depth_rgb_seg_det_fusion(
                 }
                 if (pc_rgbl.label <= 0 || pc_rgbl.label > 200)
                     continue;
+
+                // 策略1：仅针对 label==1（背景/草坪）的深度范围过滤
+                // label==3（道路）是可通行区域，不能过滤
+                if (pc_rgbl.label == 1)
+                {
+                    // 更激进：过滤所有近距离背景（< 3.5m）
+                    if (d < 3.5f)
+                    {
+                        continue;
+                    }
+                }
+
+                // 策略2：仅针对 label==1（背景/草坪）的高度过滤
+                if (pc_rgbl.label == 1)
+                {
+                    // 过滤地面附近和高处的背景点
+                    // Y > -0.3: 地面附近或高于地面（更严格）
+                    // Y < -0.6: 过高的悬浮点（更严格）
+                    if (pc_rgbl.y > -0.3f || pc_rgbl.y < -0.6f)
+                    {
+                        continue;
+                    }
+                }
+
+                // 邻域一致性检查：仅针对 label==1（背景）
+                if (pc_rgbl.label == 1)
+                {
+                    int valid_neighbors = 0;
+                    for (int dy = -4; dy <= 4; dy += 4)
+                    {
+                        for (int dx = -4; dx <= 4; dx += 4)
+                        {
+                            if (dy == 0 && dx == 0)
+                                continue;
+                            int ny = y + dy, nx = x + dx;
+                            if (ny >= 0 && ny < safe_rows && nx >= 0 && nx < safe_cols)
+                            {
+                                uint8_t neighbor_label = lab.at<uchar>(ny, nx);
+                                float neighbor_depth = depth.at<float>(ny, nx);
+                                // 邻居有效条件：同类背景标签且深度相近
+                                if (neighbor_label == 1 &&
+                                    neighbor_depth > 0 && neighbor_depth < 6.0f &&
+                                    std::abs(neighbor_depth - d) < 0.5f)
+                                {
+                                    valid_neighbors++;
+                                }
+                            }
+                        }
+                    }
+                    // 背景区域要求至少4个有效邻居（更严格）
+                    if (valid_neighbors < 4)
+                    {
+                        continue;
+                    }
+                }
+
                 // 障碍物像素施加单侧深度过滤：只滤掉明显在参考深度之后的拖尾点。
                 if (pc_rgbl.label >= 100 &&
                     label_depth_reference.count(pc_rgbl.label) &&
@@ -842,6 +932,35 @@ void StereoMultiMatch::stereo_process_pci_depth_rgb_seg_det_fusion(
                 d > label_depth_reference[label] + far_depth_tolerance)
             {
                 label_depth_filtered_count++;
+                continue;
+            }
+
+            // 邻域一致性检查：统计3x3窗口内的有效邻居数，过滤孤立噪点
+            int valid_neighbors = 0;
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dy == 0 && dx == 0)
+                        continue;
+                    int ny = y + dy, nx = x + dx;
+                    if (ny >= 0 && ny < safe_rows && nx >= 0 && nx < safe_cols)
+                    {
+                        uint8_t neighbor_label = lab.at<uchar>(ny, nx);
+                        float neighbor_depth = depth.at<float>(ny, nx);
+                        // 邻居有效条件：同类标签（障碍物）且深度相近
+                        if (neighbor_label >= 100 && neighbor_depth > 0 &&
+                            neighbor_depth < 6.0f &&
+                            std::abs(neighbor_depth - d) < 0.3f)
+                        {
+                            valid_neighbors++;
+                        }
+                    }
+                }
+            }
+            // 要求至少2个有效邻居才添加点，过滤孤立噪点
+            if (valid_neighbors < 2)
+            {
                 continue;
             }
 
@@ -994,8 +1113,8 @@ void StereoMultiMatch::stereo_point_ori_rgb_filter(
         // 对其他点云使用正常的离群点移除
         pcl::RadiusOutlierRemoval<pcl::PointXYZRGBL> ror;
         ror.setInputCloud(other_cloud);
-        ror.setRadiusSearch(0.08);      // 8cm搜索半径
-        ror.setMinNeighborsInRadius(6); // 至少6个邻居
+        ror.setRadiusSearch(0.10);      // 从 8cm 增加到 10cm，更严格过滤夜间噪点
+        ror.setMinNeighborsInRadius(8); // 从 6 增加到 8，要求更多邻居
         pcl::PointCloud<pcl::PointXYZRGBL>::Ptr filtered_other(
             new pcl::PointCloud<pcl::PointXYZRGBL>);
         ror.filter(*filtered_other);

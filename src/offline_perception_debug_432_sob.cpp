@@ -162,6 +162,7 @@ public:
     bool enabel_cdt = false;
     int frq_cdt = 5;
     bool m_enable_debug_show = true;
+    bool enable_label_100_filter = false;  // 是否过滤 label >= 100 的障碍物
 
     // 颜色后处理相关参数
     bool enable_red_brick_refine_ = false;  // 是否启用红色砖头颜色后处理
@@ -760,8 +761,16 @@ private:
     for (int y = 0; y < label_map.rows; y++) {
       for (int x = 0; x < label_map.cols; x++) {
         uint8_t label = label_map.at<uchar>(y, x);
-        // 识别障碍物：label >= 100 或 label == 4 或 label == 5
-        if (label >= 100 || label == 4 || label == 5) {
+        // 识别障碍物：根据配置决定是否包含 label >= 100
+        bool is_obstacle = false;
+        if (config_.enable_label_100_filter) {
+          // 启用过滤：包含 label >= 100 或 label == 4 或 label == 5
+          is_obstacle = (label >= 100 || label == 4 || label == 5);
+        } else {
+          // 禁用过滤：仅包含 label == 4 或 label == 5
+          is_obstacle = (label == 4 || label == 5);
+        }
+        if (is_obstacle) {
           obstacle_mask.at<uchar>(y, x) = 255;
         }
       }
@@ -1617,7 +1626,9 @@ int main(int argc, char **argv)
   // string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/";
   // string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/debug/";
   // string input_dir = "/home/youfeng/debug/boluo/0286/20260408/";
-  string input_dir = "/home/youfeng/debug/boluo/0123/20260408/debug/";
+  // string input_dir = "/home/youfeng/debug/boluo/0123/20260408/debug/";
+  // string input_dir = "/home/youfeng/debug/boluo/0124/20260408/";
+  string input_dir = "/home/youfeng/debug/boluo/0286/20260408/";
   cout << "\nInput directory: " << input_dir << endl;
 
   // 构造最终结果输出目录
