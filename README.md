@@ -7,7 +7,7 @@
 - **项目路径**: `/home/youfeng/CLionProjects/05-offline_debug_fusion/offline_perception_debug/`
 - **版本**: K1.2.2
 - **创建时间**: 2026-01-08
-- **最后更新**: 2026-04-03
+- **最后更新**: 2026-04-08
 
 ## 功能特性
 

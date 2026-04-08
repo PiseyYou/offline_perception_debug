@@ -1607,7 +1607,8 @@ int main(int argc, char **argv)
   // 默认路径
   // string input_dir = "/home/youfeng/debug/03/02/rosbag_LK-MR6P1US000107_camera_202603021453/stereo_output_rosbag_LK-MR6P1US000107_camera_202603021453_0/images/extracted_interval/brick/";
   // string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/";
-  string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/debug/";
+  // string input_dir = "/home/youfeng/debug/custom/0123/20260403/20260403/debug/";
+  string input_dir = "/home/youfeng/debug/boluo/0286/20260408/";
   cout << "\nInput directory: " << input_dir << endl;
 
   // 构造最终结果输出目录
