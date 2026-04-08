@@ -1,0 +1,2 @@
+- [Project Workflow](memory/workflow_preferences.md) — Preferences for planning and skill usage
+- [C++ Technical Debt](memory/cpp_ros2_migration.md) — Notes on ROS2 to offline migration status
