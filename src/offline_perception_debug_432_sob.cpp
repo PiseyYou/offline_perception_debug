@@ -1628,7 +1628,9 @@ int main(int argc, char **argv)
   // string input_dir = "/home/youfeng/debug/boluo/0286/20260408/";
   // string input_dir = "/home/youfeng/debug/boluo/0123/20260408/debug/";
   // string input_dir = "/home/youfeng/debug/boluo/0124/20260408/";
-  string input_dir = "/home/youfeng/debug/boluo/0286/20260408/";
+  // string input_dir = "/home/youfeng/debug/boluo/0286/20260409/";
+  string input_dir = "/home/youfeng/debug/boluo/0123/20260413/";
+  // string input_dir = "/home/youfeng/debug/boluo/0124/20260409/";
   cout << "\nInput directory: " << input_dir << endl;
 
   // 构造最终结果输出目录
