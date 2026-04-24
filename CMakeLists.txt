@@ -193,6 +193,25 @@ add_executable(offline_perception_debug_merged ${SOURCES})
 target_link_libraries(offline_perception_debug_merged ${OpenCV_LIBS} ${PCL_LIBRARIES} ${LINK_libs} ${JSONCPP_LIBRARIES})
 install(TARGETS offline_perception_debug_merged RUNTIME DESTINATION bin)
 
+set(SOURCES
+        src/offline_perception_debug_384_sob.cpp
+        src/offline_utils.cpp
+        src/stereo_multi_match.cpp
+        src/multi_sub_perception.cpp
+        src/seg_perception.cpp
+        src/det_perception.cpp
+        src/cdt_perception.cpp
+        src/qr_cs_perception.cpp
+        src/cls_perception.cpp
+        src/dsg_perception.cpp
+        src/multiscale_filter.cpp
+        src/stereo_point_cloud_rgbl.cpp
+)
+
+add_executable(offline_perception_debug_384_sob ${SOURCES})
+target_link_libraries(offline_perception_debug_384_sob ${OpenCV_LIBS} ${PCL_LIBRARIES} ${LINK_libs} ${JSONCPP_LIBRARIES})
+install(TARGETS offline_perception_debug_384_sob RUNTIME DESTINATION bin)
+
 # 打印配置信息
 message(STATUS "")
 message(STATUS "========================================")

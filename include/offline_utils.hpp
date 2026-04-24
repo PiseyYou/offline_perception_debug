@@ -28,7 +28,7 @@ std::map<int, int> getLabelDistribution(const cv::Mat &img_label);
 // 多任务 / 子任务标签 + 检测结果融合
 void filterLabelDect(cv::Mat &src_lab, std::vector<Detection> &dect_src,
                      cv::Mat &lab_dst, std::vector<Detection> &dect_dst,
-                     bool enable_det = true);
+                     bool enable_det = true, bool enable_force_bottom = false);
 
 cv::Mat processLabelsOptimizedPipeline(const cv::Mat &label_img,
                                        const cv::Mat &rgb_img, float threshold);
@@ -44,7 +44,8 @@ cv::Mat drawResult(cv::Mat &img_src, cv::Mat &img_lab,
 void convertIdToRGBOptimized(const cv::Mat &img_lab, cv::Mat &parsing_img);
 cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
                             std::vector<Detection> &dect_src,
-                            cv::Mat &img_seg_show, bool enable_draw_box = false);
+                            cv::Mat &img_seg_show, bool enable_draw_box = false,
+                            const std::map<int, std::string> *class_map = nullptr);
 
 // 保存带 RGB+label 的 PCD
 int savePcdfile_with_rgb_label(

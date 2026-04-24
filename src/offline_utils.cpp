@@ -200,7 +200,7 @@ std::map<int, int> getLabelDistribution(const cv::Mat &img_label)
 
 void filterLabelDect(Mat &src_lab, std::vector<Detection> &dect_src,
                      Mat &lab_dst, std::vector<Detection> &dect_dst,
-                     bool enable_det)
+                     bool enable_det, bool enable_force_bottom)
 {
   src_lab.copyTo(lab_dst);
 
@@ -208,9 +208,13 @@ void filterLabelDect(Mat &src_lab, std::vector<Detection> &dect_src,
   cv::compare(lab_dst, 0, mask_zero, cv::CMP_EQ);
   lab_dst.setTo(2, mask_zero);
 
-  int shift_high = 370;
-  cv::Rect force_region(0, shift_high, 640, 384 - shift_high);
-  lab_dst(force_region).setTo(cv::Scalar(2));
+  // 可配置：是否强制底部区域为label==2（草地）
+  if (enable_force_bottom)
+  {
+    int shift_high = 370;
+    cv::Rect force_region(0, shift_high, 640, 384 - shift_high);
+    lab_dst(force_region).setTo(cv::Scalar(2));
+  }
 
   for (size_t i = 0; i < dect_src.size(); i++)
   {
@@ -242,15 +246,24 @@ void filterLabelDect(Mat &src_lab, std::vector<Detection> &dect_src,
     if (target_id == 3)
     {
       process_roi(103);
+      Detection det_with_mapped_id = dect_src[i];
+      det_with_mapped_id.id = 103;  // 将ID映射为103
+      dect_dst.push_back(det_with_mapped_id);
     }
     else if (target_id == 6)
     {
       process_roi(106);
+      Detection det_with_mapped_id = dect_src[i];
+      det_with_mapped_id.id = 106;  // 将ID映射为106
+      dect_dst.push_back(det_with_mapped_id);
     }
     else if (target_id == 7)
     {
       // process_roi(107);
       cout << "[person] have been dect....." << endl;
+      Detection det_with_mapped_id = dect_src[i];
+      det_with_mapped_id.id = 107;  // 将ID映射为107
+      dect_dst.push_back(det_with_mapped_id);
     }
     else if (target_id == 4)  // 障碍物检测框 (id=4 -> label=104)
     {
@@ -282,7 +295,9 @@ void filterLabelDect(Mat &src_lab, std::vector<Detection> &dect_src,
       {
         // 保留检测框标签，覆盖整个区域
         roi_dst.setTo(104);
-        dect_dst.push_back(dect_src[i]);
+        Detection det_with_mapped_id = dect_src[i];
+        det_with_mapped_id.id = 104;  // 将ID映射为104
+        dect_dst.push_back(det_with_mapped_id);
       }
       // 情况3: 其他情况（主要是背景区域）
       else
@@ -293,7 +308,9 @@ void filterLabelDect(Mat &src_lab, std::vector<Detection> &dect_src,
         cv::inRange(roi_dst, cv::Scalar(5), cv::Scalar(5), mask_five);
         cv::Mat combined_mask = mask_one | mask_five;
         roi_dst.setTo(104, combined_mask);
-        dect_dst.push_back(dect_src[i]);
+        Detection det_with_mapped_id = dect_src[i];
+        det_with_mapped_id.id = 104;  // 将ID映射为104
+        dect_dst.push_back(det_with_mapped_id);
       }
     }
     else
@@ -301,7 +318,9 @@ void filterLabelDect(Mat &src_lab, std::vector<Detection> &dect_src,
       if (enable_det)
       {
         roi_dst.setTo(target_id + 100);
-        dect_dst.push_back(dect_src[i]);
+        Detection det_with_mapped_id = dect_src[i];
+        det_with_mapped_id.id = target_id + 100;  // 将ID映射为id+100
+        dect_dst.push_back(det_with_mapped_id);
       }
     }
   }
@@ -677,7 +696,8 @@ void convertIdToRGBOptimized(const cv::Mat &img_lab, cv::Mat &parsing_img) {
     }
 }
 cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
-                            std::vector<Detection> &dect_src, cv::Mat &img_seg_show, bool enable_draw_box) {
+                            std::vector<Detection> &dect_src, cv::Mat &img_seg_show, bool enable_draw_box,
+                            const std::map<int, std::string> *class_map) {
 
     // 1. 生成颜色图 (在较小的尺寸上操作)
     cv::Mat parsing_img(img_lab.size(), CV_8UC3);
@@ -702,8 +722,14 @@ cv::Mat drawResultOptimized(cv::Mat &img_src, cv::Mat &img_lab,
             // 绘制矩形
             cv::rectangle(img_seg_show, rect_tmp, cv::Scalar(0, 255, 0), 2);
 
-            std::string label = "id_" + std::to_string(det.id) + ":" +
-                                cv::format("%.2f", det.score);
+            // 使用类别名称（如果提供了class_map）
+            std::string class_name;
+            if (class_map && class_map->count(det.id)) {
+                class_name = class_map->at(det.id);
+            } else {
+                class_name = "id_" + std::to_string(det.id);
+            }
+            std::string label = class_name + ":" + cv::format("%.2f", det.score);
 
             cv::putText(img_seg_show, label,
                         cv::Point(det.bbox.xmin, std::max((int)det.bbox.ymin + 15, 15)),

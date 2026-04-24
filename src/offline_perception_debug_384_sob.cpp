@@ -17,6 +17,8 @@
 #include <pcl/point_types.h>
 #include <string>
 #include <vector>
+#include <unistd.h>
+#include <linux/limits.h>
 
 // 引入感知模块头文件
 #include "cdt_perception.h"
@@ -32,6 +34,20 @@
 namespace fs = std::filesystem;
 using namespace cv;
 using namespace std;
+
+// 获取可执行文件所在目录的父目录（项目根目录）
+string getProjectRoot() {
+  char buffer[PATH_MAX];
+  ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+  if (len != -1) {
+    buffer[len] = '\0';
+    fs::path exe_path(buffer);
+    // 可执行文件在 build/ 目录，所以父目录的父目录是项目根
+    return exe_path.parent_path().parent_path().string();
+  }
+  // 如果失败，返回当前目录
+  return fs::current_path().string();
+}
 
 map<int, string> mul_map_class;
 
@@ -152,7 +168,7 @@ public:
   // 配置参数
   struct Config
   {
-    int infer_mode = 7;               // 推理模式 0-6
+    int infer_mode = 6;               // 推理模式 0-6
     // int erode_pixel = 205;            // 腐蚀像素
     int erode_pixel = 205;            // 腐蚀像素
     float area_threshold = 0.5;       // 区域阈值
@@ -171,19 +187,22 @@ public:
     // 深度补全策略: 0=禁用, 1=仅检测框, 2=仅语义, 3=两者都用
     int depth_inpainting_strategy_ = 0;
 
+    // 可视化配置
+    bool enable_draw_detection_box = false;   // 是否在可视化中显示检测框
+    bool enable_force_bottom_label = false;  // 是否强制底部区域为label==2（草地）
+
     string finalPicDir = ""; // 最终图片输出目录
     string finalPcdDir = ""; // 最终PCD输出目录
 
-    string cdt_model = "../models/cdt_20251125_640x384.bin";
-    string det_model = "../models/det_20241106_640x480.bin";
-    string seg_model = "../models/seg_20250421_640x384.bin";
-    string multi_model = "../models/mul_20250918_640x384.bin";
-    string cs_model = "../models/cqr_20250821_640x384_yolov8n.bin";
-    // string sub_model = "../models/sub_20260105_640x384.bin";
-    // string sub_model = "../models/sub_20260225_640x384.bin";
-    string sub_model = "../models/sub_20260303_640x384.bin";
-    // string dsg_multi_model = "../models/dsg_multi_20260403_640x384.bin";
-    string dsg_multi_model = "../models/dsg_multi_20260407_640x384.bin";
+    string cdt_model = "models/cdt_20251125_640x384.bin";
+    string det_model = "models/det_20241106_640x480.bin";
+    string seg_model = "models/seg_20250421_640x384.bin";
+    string multi_model = "models/mul_20250918_640x384.bin";
+    string cs_model = "models/cqr_20250821_640x384_yolov8n.bin";
+    // string sub_model = "models/sub_20260105_640x384.bin";
+    // string sub_model = "models/sub_20260225_640x384.bin";
+    string sub_model = "models/sub_20260303_640x384.bin";
+    string dsg_multi_model = "models/dsg_multi_20260403_640x384.bin";
   };
 
   struct ProcessResult
@@ -202,6 +221,40 @@ public:
   bool init()
   {
     cout << "\n========== Initializing Perception Modules ==========" << endl;
+
+    // 获取项目根目录并修正模型路径
+    string project_root = getProjectRoot();
+    cout << "Project root: " << project_root << endl;
+
+    // 如果模型路径不是绝对路径，则添加项目根目录前缀
+    auto fix_model_path = [&](string& path) {
+      if (!fs::path(path).is_absolute() && !fs::exists(path)) {
+        string new_path = project_root + "/" + path;
+        if (fs::exists(new_path)) {
+          path = new_path;
+        }
+      }
+    };
+
+    fix_model_path(config_.cdt_model);
+    fix_model_path(config_.det_model);
+    fix_model_path(config_.seg_model);
+    fix_model_path(config_.multi_model);
+    fix_model_path(config_.cs_model);
+    fix_model_path(config_.sub_model);
+    fix_model_path(config_.dsg_multi_model);
+
+    // 验证关键模型文件是否存在
+    if (!fs::exists(config_.cdt_model)) {
+      cerr << "[Error] CDT model not found: " << config_.cdt_model << endl;
+      cerr << "Please check the model path or run from project root directory." << endl;
+      return false;
+    }
+    if (config_.infer_mode == 7 && !fs::exists(config_.dsg_multi_model)) {
+      cerr << "[Error] DSG model not found: " << config_.dsg_multi_model << endl;
+      cerr << "Please check the model path or run from project root directory." << endl;
+      return false;
+    }
 
     // 初始化立体匹配 (只有 mode 7 使用自适应参数，其他模式使用原始参数)
     if (config_.infer_mode == 7)
@@ -284,6 +337,7 @@ public:
     }
 
     // 转换为灰度图用于立体匹配（右图可能为空）
+    // 注意：立体匹配需要原始480高度的图像
     Mat grayImageLeft, grayImageRight;
     cvtColor(left_img, grayImageLeft, COLOR_BGR2GRAY);
     if (!right_img.empty())
@@ -291,12 +345,27 @@ public:
       cvtColor(right_img, grayImageRight, COLOR_BGR2GRAY);
     }
 
-    // // Resize到640x384 (根据模型输入要求)
-    // Mat resized_left, resized_right;
-    // resize(left_img, resized_left, Size(640, 384));
-    // resize(right_img, resized_right, Size(640, 384));
-    // resize(grayImageLeft, grayImageLeft, Size(640, 384));
-    // resize(grayImageRight, grayImageRight, Size(640, 384));
+    // 对于mode 6和7，直接使用原始640x480图片（在processMode内部处理尺寸）
+    // 对于其他mode，resize到640x384
+    Mat processed_left, processed_right;
+    if (config_.infer_mode == 6 || config_.infer_mode == 7)
+    {
+      // Mode 6 & 7: 使用原始640x480图片
+      processed_left = left_img.clone();
+      if (!right_img.empty())
+      {
+        processed_right = right_img.clone();
+      }
+    }
+    else
+    {
+      // 其他模式: Resize到640x384
+      resize(left_img, processed_left, Size(640, 384));
+      if (!right_img.empty())
+      {
+        resize(right_img, processed_right, Size(640, 384));
+      }
+    }
 
     cout << "\n======= Processing Frame " << frame_id << " =======" << endl;
     cout << "Mode: " << config_.infer_mode << endl;
@@ -305,33 +374,28 @@ public:
     switch (config_.infer_mode)
     {
     case 0:
-      result =
-          processMode0(left_img, grayImageRight, grayImageLeft, grayImageRight);
+      result = processMode0(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     case 1:
-      result =
-          processMode1(left_img, grayImageRight, grayImageLeft, grayImageRight);
+      result = processMode1(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     case 2:
-      result =
-          processMode2(left_img, grayImageRight, grayImageLeft, grayImageRight);
+      result = processMode2(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     case 3:
-      result =
-          processMode3(left_img, grayImageRight, grayImageLeft, grayImageRight);
+      result = processMode3(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     case 4:
-      result =
-          processMode4(left_img, grayImageRight, grayImageLeft, grayImageRight);
+      result = processMode4(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     case 5:
-      result = processMode5(left_img, right_img, grayImageLeft, grayImageRight);
+      result = processMode5(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     case 6:
-      result = processMode6(left_img, right_img, grayImageLeft, grayImageRight);
+      result = processMode6(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     case 7:
-      result = processMode7(left_img, right_img, grayImageLeft, grayImageRight);
+      result = processMode7(processed_left, processed_right, grayImageLeft, grayImageRight);
       break;
     default:
       cerr << "[Error] Invalid mode: " << config_.infer_mode << endl;
@@ -1177,7 +1241,31 @@ private:
     // 1. 网络在 384 下推理
     multiPerception_.perception_process_bgr_no_argmax_erode_mul(
         resizeImg, detections, img_label, config_.erode_pixel);
-    filterLabelDect(img_label, detections, dst_label, dect_dst);
+
+    // 根据配置决定是否融合检测框到分割结果
+    if (config_.enable_draw_detection_box)
+    {
+      // 融合检测框：将检测框区域的label映射为id+100
+      filterLabelDect(img_label, detections, dst_label, dect_dst, true, config_.enable_force_bottom_label);
+    }
+    else
+    {
+      // 不融合检测框：只使用纯分割结果
+      img_label.copyTo(dst_label);
+
+      // 可选：是否强制底部区域为label==2（草地）
+      if (config_.enable_force_bottom_label)
+      {
+        int shift_high = 370;
+        cv::Rect force_region(0, shift_high, 640, 384 - shift_high);
+        dst_label(force_region).setTo(cv::Scalar(2));
+      }
+
+      // 处理label==0的像素，设置为2（草地）
+      cv::Mat mask_zero;
+      cv::compare(dst_label, 0, mask_zero, cv::CMP_EQ);
+      dst_label.setTo(2, mask_zero);
+    }
 
     // 红色砖头颜色后处理: 在640x384尺度上修正被误分类为草坪/道路的红色区域
     if (config_.enable_red_brick_refine_)
@@ -1265,7 +1353,7 @@ private:
       Mat img_seg_show;
       // 绘制分割结果，dect_dst 已是 432 高度比例，绘制在 croppedImg(640x432) 上
       Mat pure_seg_mat =
-          drawResultOptimized(croppedImg, label_432, dect_dst, img_seg_show);
+          drawResultOptimized(croppedImg, label_432, dect_dst, img_seg_show, false, &mul_map_class);
 
       Mat origin_seg;
       cv::hconcat(croppedImg, pure_seg_mat, origin_seg); // 拼接图片1和图片2
@@ -1303,8 +1391,9 @@ private:
 
     cout << "[Mode 7] DSG Night recognition" << endl;
 
-    cv::Rect cropRegion(0, 0, left.cols, 432);
-    cv::Mat croppedImg = left(cropRegion);
+    // 1. 从640x480裁剪成640x384（y从0到384）
+    cv::Rect cropRegion(0, 0, 640, 384);
+    cv::Mat croppedImg = left(cropRegion).clone();
 
     // DSG logic: Align with reference run_cdt_dsg_fusion_dir.cpp
 
@@ -1312,29 +1401,32 @@ private:
     cv::Mat img_label = cv::Mat::zeros(384, 640, CV_8UC1) + 1;
     cv::Mat lab_out, lab_dst;
 
-    // 1. Resize to 640x384 for segmentation inference
-    cv::Mat resizedForSeg;
-    cv::resize(croppedImg, resizedForSeg, cv::Size(640, 384));
+    // 2. 使用640x384的图片进行分割识别
+    cv::Mat resizedForSeg = croppedImg.clone();
 
     // Set inference internal dimensions
     dsgPerception_.ori_height = resizedForSeg.rows;
     dsgPerception_.ori_width  = resizedForSeg.cols;
 
-    // 2. Inference Multi-task (Detection + Segmentation)
+    // Inference Multi-task (Detection + Segmentation)
     dsgPerception_.perception_process_bgr_no_argmax_erode(
         resizedForSeg, dect_src, img_label, lab_out, config_.erode_pixel);
 
-    // 2. Resize segmentation result from 640x384 back to 640x432
-    cv::resize(lab_out, lab_out, cv::Size(640, 432), 0, 0, cv::INTER_NEAREST);
-
-    // 3. Map detection IDs and prepare lab_dst (logic from reference line 1130-1137)
+    // 3. 获取640x384的单通道分割图片
     lab_out.copyTo(lab_dst);
     dect_dst.clear();
-    for (const auto& det : dect_src) {
-        Detection fixed_det = det;
-        fixed_det.id += 100; // Map to 100+ format
-        dect_dst.push_back(fixed_det);
+
+    // 根据配置决定是否处理检测框
+    if (config_.enable_draw_detection_box)
+    {
+      // 融合检测框：将检测框ID映射为id+100
+      for (const auto& det : dect_src) {
+          Detection fixed_det = det;
+          fixed_det.id += 100; // Map to 100+ format
+          dect_dst.push_back(fixed_det);
+      }
     }
+    // 如果不显示检测框，dect_dst 保持为空
 
     // CES 逻辑已关闭
     // bool all_neighbors_are_lawn = false;
@@ -1378,22 +1470,22 @@ private:
     if (grayImageR.empty())
       return result;
 
-    // Depth computation
+    // 3. 深度计算 - 使用原始480高度的灰度图
     auto depth_start = chrono::high_resolution_clock::now();
     Mat depth_cal = stereo_multi_match.stereo_multi_process(grayImageL, grayImageR, false);
 
-    // Crop depth to 432 height to match croppedImg/labels
-    cv::Mat depth_432 = depth_cal(cv::Rect(0, 0, 640, 432)).clone();
+    // 裁剪深度图从480到384（y从0到384）
+    cv::Mat depth_384 = depth_cal(cv::Rect(0, 0, 640, 384)).clone();
 
     auto depth_end = chrono::high_resolution_clock::now();
     cout << "[Step 2/3] Depth computation done: "
          << chrono::duration<double, milli>(depth_end - depth_start).count() << " ms" << endl;
 
-    // Fusion
+    // 4. 融合：640x384的单通道图片与640x384深度图
     auto fusion_start = chrono::high_resolution_clock::now();
     pcl::PointCloud<pcl::PointXYZRGBL> xyz_rgbi_cloud, out_xyz_rgbi_cloud;
     stereo_multi_match.stereo_process_pci_depth_rgb_seg_det_fusion(
-        depth_432, lab_dst, dect_dst, croppedImg, xyz_rgbi_cloud, out_xyz_rgbi_cloud);
+        depth_384, lab_dst, dect_dst, croppedImg, xyz_rgbi_cloud, out_xyz_rgbi_cloud);
     result.point_cloud = out_xyz_rgbi_cloud;
     auto fusion_end = chrono::high_resolution_clock::now();
     cout << "[Step 3/3] Fusion done: "
@@ -1406,24 +1498,23 @@ private:
     {
       Mat img_seg_show, xyz_rgbl_show, origin_seg, pure_seg;
 
-      // 可视化统一使用 640x432（与 croppedImg 原始尺寸一致）
-      cv::Mat croppedImgVis;
-      cv::resize(croppedImg, croppedImgVis, cv::Size(640, 432));
-      cv::Mat labVis;
-      cv::resize(lab_dst, labVis, cv::Size(640, 432), 0, 0, cv::INTER_NEAREST);
+      // 可视化使用裁剪后的640x384图片
+      cv::Mat croppedImgVis = croppedImg.clone();
+      cv::Mat labVis = lab_dst.clone();
 
-      bool enable_draw_box = false; // 控制是否显示检测框，默认不显示
-      pure_seg = drawResultOptimized(croppedImgVis, labVis, dect_dst, img_seg_show, enable_draw_box);
+      // 使用配置选项控制是否显示检测框
+      pure_seg = drawResultOptimized(croppedImgVis, labVis, dect_dst, img_seg_show, config_.enable_draw_detection_box, &mul_map_class);
 
-      // 上方：原图 | 纯色分割 | 叠加图 → 1920x432
+      // 横向拼接：原图(640x384) | 纯色分割(640x384) | 叠加图(640x384) → 1920x384
       cv::hconcat(croppedImgVis, pure_seg, origin_seg);
       cv::hconcat(origin_seg, img_seg_show, origin_seg);
 
-      // 下方：三视图（label行 480 + RGB行 480 → 1920x960）
+      // 点云可视化：生成两行，每行640x480 → 1920x960
       stereo_point_cloud spc;
       spc.show_xyz_rgbl_plane_point_cloud_final(out_xyz_rgbi_cloud, xyz_rgbl_show);
 
-      // 最终拼接：432 + 480 + 480 = 1392 高度
+      // 纵向拼接：1920x384 + 1920x960 = 1920x1344
+      // (上方：3张640x384横拼 + 下方：点云可视化640x480+640x480)
       cv::Mat final_compared;
       cv::vconcat(origin_seg, xyz_rgbl_show, final_compared);
 
@@ -1450,53 +1541,48 @@ private:
     // Step 1: 子任务推理
     auto infer_start = chrono::high_resolution_clock::now();
 
-    cv::Mat croppedImg, resizeImg;
-    if (left.rows == 480)
-    {
-      cv::Rect cropRegion(0, 0, left.cols, 432);
-      croppedImg = left(cropRegion);
-      resizeImg = cv::Mat::zeros(384, 640, croppedImg.type());
-      cv::resize(croppedImg, resizeImg, cv::Size(640, 384));
-    }
-    else if (left.rows == 384)
-    {
-      croppedImg = left;
-      resizeImg = left.clone();
-    }
+    // 1. 从640x480裁剪成640x384（y从0到384）
+    cv::Rect cropRegion(0, 0, 640, 384);
+    cv::Mat croppedImg = left(cropRegion).clone();
 
-    cv::Mat dst_label(resizeImg.rows, resizeImg.cols, CV_8UC1);
+    cv::Mat dst_label(croppedImg.rows, croppedImg.cols, CV_8UC1);
     std::vector<Detection> detections, dect_dst;
     cv::Mat img_label = cv::Mat::zeros(384, 640, CV_8UC1) + 2;
     Mat lab_out = cv::Mat::zeros(384, 640, CV_8UC1);
 
+    // 2. 使用640x384的图片进行分割识别
     mulSubPerception.perception_process_bgr_no_argmax_erode(
-        resizeImg, detections, img_label, lab_out, config_.erode_pixel);
+        croppedImg, detections, img_label, lab_out, config_.erode_pixel);
 
-    filterLabelDect(lab_out, detections, dst_label, dect_dst);
+    // 根据配置决定是否融合检测框到分割结果
+    if (config_.enable_draw_detection_box)
+    {
+      // 融合检测框：将检测框区域的label映射为id+100
+      filterLabelDect(lab_out, detections, dst_label, dect_dst, true, config_.enable_force_bottom_label);
+    }
+    else
+    {
+      // 不融合检测框：只使用纯分割结果
+      lab_out.copyTo(dst_label);
+
+      // 可选：是否强制底部区域为label==2（草地）
+      if (config_.enable_force_bottom_label)
+      {
+        int shift_high = 370;
+        cv::Rect force_region(0, shift_high, 640, 384 - shift_high);
+        dst_label(force_region).setTo(cv::Scalar(2));
+      }
+
+      // 处理label==0的像素，设置为2（草地）
+      cv::Mat mask_zero;
+      cv::compare(dst_label, 0, mask_zero, cv::CMP_EQ);
+      dst_label.setTo(2, mask_zero);
+    }
 
     // 红色砖头颜色后处理: 在640x384尺度上修正被误分类为草坪/道路的红色区域
     if (config_.enable_red_brick_refine_)
     {
-      refineObstacleByColorAndEdge(dst_label, resizeImg, config_.red_brick_min_area_);
-    }
-
-    // 还原 label 至真实尺寸
-    cv::Mat label_432;
-    if (dst_label.rows == 384 && croppedImg.rows == 432)
-    {
-      cv::resize(dst_label, label_432, cv::Size(640, 432), 0, 0,
-                 cv::INTER_NEAREST);
-      for (auto &det : dect_dst)
-      {
-        det.bbox.ymin =
-            std::max(0, static_cast<int>(det.bbox.ymin * (432.0f / 384.0f)));
-        det.bbox.ymax =
-            std::min(432, static_cast<int>(det.bbox.ymax * (432.0f / 384.0f)));
-      }
-    }
-    else
-    {
-      label_432 = dst_label.clone();
+      refineObstacleByColorAndEdge(dst_label, croppedImg, config_.red_brick_min_area_);
     }
 
     auto infer_end = chrono::high_resolution_clock::now();
@@ -1504,7 +1590,8 @@ private:
          << chrono::duration<double, milli>(infer_end - infer_start).count()
          << " ms" << endl;
 
-    result.label_map = label_432.clone();
+    // 3. 获取640x384的单通道分割图片
+    result.label_map = dst_label.clone();
 
     // Step 2: 深度计算与融合
     pcl::PointCloud<pcl::PointXYZRGBL> xyz_rgbl_cloud, out_xyz_rgbl_cloud;
@@ -1513,80 +1600,57 @@ private:
     {
       auto depth_start = chrono::high_resolution_clock::now();
 
-      Mat disparity =
-          stereo_multi_match.stereo_multi_process_depth(grayImageL, grayImageR);
+      // 3. 深度计算 - 使用原始480高度的灰度图
+      Mat depth_cal = stereo_multi_match.stereo_multi_process(grayImageL, grayImageR, false);
 
-      // label_map 从 640x432 pad 到 640x480，底部填充 2（背景标签）
-      cv::Mat label_480 = cv::Mat::zeros(480, 640, result.label_map.type()) + 2;
-      result.label_map.copyTo(label_480(cv::Rect(0, 0, 640, 432)));
-
-      Mat depth_480 = stereo_multi_match.stereo_multi_process_filter(
-          disparity, label_480, config_.enable_height_filter_);
-
-      // 裁剪 depth 到 640x432 用于融合
-      cv::Rect depthCropRegion(0, 0, 640, 432);
-      Mat depth_cal = depth_480(depthCropRegion);
+      // 裁剪深度图从480到384（y从0到384）
+      cv::Mat depth_384 = depth_cal(cv::Rect(0, 0, 640, 384)).clone();
 
       auto depth_end = chrono::high_resolution_clock::now();
-      cout << "[Step 2/4] Depth computation done: "
+      cout << "[Step 2/3] Depth computation done: "
            << chrono::duration<double, milli>(depth_end - depth_start).count()
            << " ms" << endl;
 
-      // Step 3: 深度补全
-      auto inpaint_start = chrono::high_resolution_clock::now();
-      Mat depth_inpainted = depth_cal.clone();
-
-      // 深度补全策略
-      if (config_.depth_inpainting_strategy_ > 0 && !depth_cal.empty())
-      {
-        // 策略1或3: 基于检测框的补全
-        if (config_.depth_inpainting_strategy_ == 1 || config_.depth_inpainting_strategy_ == 3)
-        {
-          depth_inpainted = depthInpaintingByDetections(depth_inpainted, result.label_map, dect_dst);
-        }
-
-        // 策略2或3: 基于语义分割的补全
-        if (config_.depth_inpainting_strategy_ == 2 || config_.depth_inpainting_strategy_ == 3)
-        {
-          depth_inpainted = depthInpaintingForObstacles(depth_inpainted, result.label_map);
-        }
-      }
-
-      auto inpaint_end = chrono::high_resolution_clock::now();
-      cout << "[Step 3/4] Depth inpainting done: "
-           << chrono::duration<double, milli>(inpaint_end - inpaint_start).count()
-           << " ms" << endl;
-
-      // Step 4: 融合
+      // 4. 融合：640x384的单通道图片与640x384深度图
       auto fusion_start = chrono::high_resolution_clock::now();
       stereo_multi_match.stereo_process_pci_depth_rgb_seg_det_fusion(
-          depth_inpainted, result.label_map, dect_dst, croppedImg, xyz_rgbl_cloud,
+          depth_384, result.label_map, dect_dst, croppedImg, xyz_rgbl_cloud,
           out_xyz_rgbl_cloud);
 
       auto fusion_end = chrono::high_resolution_clock::now();
-      cout << "[Step 4/4] Fusion done: "
+      cout << "[Step 3/3] Fusion done: "
            << chrono::duration<double, milli>(fusion_end - fusion_start).count()
            << " ms" << endl;
     }
 
+    // 可视化和保存
     if (config_.m_enable_debug_show)
     {
-      Mat img_seg_show;
-      Mat pure_seg_mat = drawResultOptimized(croppedImg, result.label_map,
-                                             dect_dst, img_seg_show);
-      Mat origin_seg;
+      Mat img_seg_show, xyz_rgbl, origin_seg, pure_seg;
 
-      cv::hconcat(croppedImg, pure_seg_mat, origin_seg);
+      // 使用裁剪后的640x384图片进行可视化
+      cv::Mat croppedImgVis = croppedImg.clone();
+      cv::Mat labVis = result.label_map.clone();
+
+      // 使用配置选项控制是否显示检测框
+      pure_seg = drawResultOptimized(croppedImgVis, labVis, dect_dst, img_seg_show, config_.enable_draw_detection_box, &mul_map_class);
+
+      // 横向拼接：原图(640x384) | 纯色分割(640x384) | 叠加图(640x384) → 1920x384
+      cv::hconcat(croppedImgVis, pure_seg, origin_seg);
       cv::hconcat(origin_seg, img_seg_show, origin_seg);
-      Mat xyz_rgbl, final_compared;
-      stereo_point_cloud stereoPointCloud;
+
+      Mat final_compared;
       if (!grayImageR.empty())
       {
+        // 点云可视化：生成两行，每行640x480 → 1920x960
+        stereo_point_cloud stereoPointCloud;
         stereoPointCloud.show_xyz_rgbl_plane_point_cloud_final(
             out_xyz_rgbl_cloud, xyz_rgbl);
+
+        // 纵向拼接：1920x384 + 1920x960 = 1920x1344
         cv::vconcat(origin_seg, xyz_rgbl, final_compared);
-        string finalPcdPath =
-            config_.finalPcdDir + current_image_name_ + "_sub_cdt";
+
+        string finalPcdPath = config_.finalPcdDir + current_image_name_ + "_sub_cdt";
         savePcdfile_with_rgb_label(out_xyz_rgbl_cloud, finalPcdPath);
       }
       else
@@ -1594,8 +1658,7 @@ private:
         final_compared = origin_seg;
       }
 
-      string finalPicPath =
-          config_.finalPicDir + current_image_name_ + "_sub_cdt.jpg";
+      string finalPicPath = config_.finalPicDir + current_image_name_ + "_sub_cdt.jpg";
       imwrite(finalPicPath, final_compared);
     }
 
@@ -1614,11 +1677,19 @@ int main(int argc, char **argv)
   cout << "  Offline Perception Debug Tool (Mode-Based)    " << endl;
   cout << "==================================================" << endl;
 
+  // 初始化类别映射表
+  initMulClassMap();
+
   // 读取配置
   OfflinePerceptionProcessor::Config config;
   // TODO: 从config.yaml读取配置
-  config.infer_mode = 6;
+  config.infer_mode = 7;
   config.m_enable_debug_show = true;  // 启用调试输出（包括点云保存）
+
+  // 可视化配置（使用 Config 结构体中的默认值）
+  // config.enable_draw_detection_box = true;   // 显示检测框、类别和置信度
+  // config.enable_force_bottom_label = false;  // 不强制底部为草地
+
   // config.dsg_multi_model = "../models/dsg_multi_20260401_640x384.bin";
   bool ret_pcd_dir = true;
 
@@ -1631,7 +1702,10 @@ int main(int argc, char **argv)
   // string input_dir = "/home/youfeng/debug/boluo/0124/20260408/";
   // string input_dir = "/home/youfeng/debug/boluo/0286/20260409/";
   // string input_dir = "/home/youfeng/debug/boluo/0123/20260413/";
-  string input_dir = "/home/youfeng/debug/custom/0102/0423/stereo/";
+  // string input_dir = "/home/youfeng/debug/custom/amc/userdata/bestmow_data/image_save_path/20260122/stereo_bestMow/";
+  // string input_dir = "/home/youfeng/debug/custom/amc/userdata/bestmow_data/image_save_path/20260123/stereo_bestMow/";
+  // string input_dir = "/home/youfeng/debug/custom/amc/userdata/bestmow_data/image_save_path/20260123/stereo_bestMow/debug/";
+  string input_dir = "/home/youfeng/debug/boluo/rosbag/rosbag_LK-MR2P1US000017_navigation_202604161823/stereo_output_rosbag_LK-MR2P1US000017_navigation_202604161823_0/images/extracted_interval/";
   // string input_dir = "/home/youfeng/debug/boluo/0124/20260409/";
   cout << "\nInput directory: " << input_dir << endl;
 
@@ -1639,10 +1713,10 @@ int main(int argc, char **argv)
   const string mode_suffix =
       to_string(config.infer_mode) + "_" + to_string(config.erode_pixel);
 
-  // 构造配置参数后缀
   string config_suffix = "";
   if (config.infer_mode == 6)
   {
+  // 构造配置参数后缀
     // 添加红砖颜色后处理参数
     if (config.enable_red_brick_refine_)
     {
@@ -1684,6 +1758,8 @@ int main(int argc, char **argv)
   cout << "Erode pixel: " << config.erode_pixel << endl;
   cout << "Area threshold: " << config.area_threshold << endl;
   cout << "Detection threshold: " << config.detection_threshold << endl;
+  cout << "Draw detection box: " << (config.enable_draw_detection_box ? "enabled" : "disabled") << endl;
+  cout << "Force bottom label: " << (config.enable_force_bottom_label ? "enabled" : "disabled") << endl;
   if (config.infer_mode == 6)
   {
     cout << "Red brick refine: " << (config.enable_red_brick_refine_ ? "enabled" : "disabled") << endl;
